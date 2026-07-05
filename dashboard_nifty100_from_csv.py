@@ -1,12 +1,15 @@
 # paste this entire file into your app (keep your existing filename)
 import os
 import time
+import json
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import yfinance as yf
+import threading
 
 # -------------------------
 # Defaults and strategy params
@@ -25,6 +28,8 @@ DEFAULT_ALLOC_PCT = 0.10
 DEFAULT_TAKE_PROFIT_PCT = 0.20
 
 st.set_page_config(layout="wide", page_title="NIFTY100 Backtest + Sell Trigger (top100.csv)")
+
+PERSIST_FILE = "dashboard_state.json"
 
 # -------------------------
 # CSV loader + sanitizer
@@ -91,6 +96,23 @@ def get_tickers():
         "RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK",
         "LT","HINDUNILVR","ITC","AXISBANK","SBIN"
     ])
+
+def load_persisted_state():
+    if not os.path.exists(PERSIST_FILE):
+        return {}
+    try:
+        with open(PERSIST_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_persisted_state(state):
+    try:
+        with open(PERSIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
 
 # -------------------------
 # Batched fetch with retries
@@ -326,6 +348,15 @@ st.title("NIFTY100 Strategy Backtest + Sell Trigger (top100.csv)")
 
 tickers = get_tickers()
 period = "2y"  # fixed
+persisted_state = load_persisted_state()
+default_bought = [t for t in persisted_state.get("bought_tickers", []) if t in tickers]
+
+if "results_rows" not in st.session_state:
+    st.session_state.results_rows = []
+    st.session_state.diagnostics = {"failed_downloads": [], "too_short": [], "exceptions": []}
+    st.session_state.trades_summary = {}
+    st.session_state.equity_curves = {}
+    st.session_state.last_refresh = None
 
 with st.sidebar:
     st.header("Inputs (kept)")
@@ -340,11 +371,19 @@ with st.sidebar:
     view_mode = st.radio("Select view mode", ["Historical","Current"], index=0)
 
     st.markdown("**Portfolio**")
-    bought_tickers = st.multiselect("Bought tickers (mark those you own)", options=tickers, default=[])
+    bought_tickers = st.multiselect("Bought tickers (mark those you own)", options=tickers, default=default_bought)
+
+    if bought_tickers != default_bought:
+        persisted_state["bought_tickers"] = bought_tickers
+        save_persisted_state(persisted_state)
 
     st.markdown("**Optional: per-ticker entry prices (for stop-loss checks)**")
     st.markdown("Enter as comma-separated pairs: SYMBOL:ENTRY_PRICE, e.g. RELIANCE.NS:2500, TCS.NS:3200")
-    entry_prices_text = st.text_area("Entry prices (optional)", value="", height=80)
+    default_entry_text = persisted_state.get("entry_prices_text", "")
+    entry_prices_text = st.text_area("Entry prices (optional)", value=default_entry_text, height=80)
+    if entry_prices_text != default_entry_text:
+        persisted_state["entry_prices_text"] = entry_prices_text
+        save_persisted_state(persisted_state)
     # parse entry prices later
 
     recent_price_override = None
@@ -368,7 +407,62 @@ with st.sidebar:
     stop_loss_pct = st.slider("Stop loss % (used for stop-loss check vs entry price)", min_value=1, max_value=50, value=int(DEFAULT_STOP_LOSS_PCT*100)) / 100.0
     run_backtest_flag = st.checkbox("Run backtest for matching tickers", value=False)
 
-    run_btn = st.button("🔄 Run Analysis")
+    st.markdown("**Refresh controls**")
+    auto_refresh = st.checkbox("Auto-refresh every hour", value=False)
+    run_btn_manual = st.button("🔄 Run Analysis")
+
+    auto_refresh_count = 0
+    if auto_refresh:
+        auto_refresh_count = st_autorefresh(interval=3600000, limit=None, key="auto_refresh")
+
+    run_btn = run_btn_manual or auto_refresh_count > 0
+
+    if "last_refresh" not in st.session_state:
+        st.session_state.last_refresh = None
+    if run_btn:
+        st.session_state.last_refresh = datetime.now()
+    if st.session_state.last_refresh is not None:
+        st.sidebar.markdown(f"**Last refresh:** {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
+    if auto_refresh and auto_refresh_count > 0:
+        st.sidebar.info("Auto refresh triggered.")
+
+    # Background server-side refresh options (persists results even when no client connected)
+    bg_default = persisted_state.get("background_refresh_enabled", False)
+    bg_interval_default = persisted_state.get("background_refresh_interval", 60)
+    background_refresh_enabled = st.checkbox("Enable background server refresh (persist refreshed results)", value=bg_default)
+    background_refresh_interval = st.number_input("Background refresh interval (minutes)", min_value=1, max_value=1440, value=int(bg_interval_default), step=1)
+    if background_refresh_enabled != bg_default or background_refresh_interval != bg_interval_default:
+        persisted_state["background_refresh_enabled"] = bool(background_refresh_enabled)
+        persisted_state["background_refresh_interval"] = int(background_refresh_interval)
+        save_persisted_state(persisted_state)
+
+# Start background thread if requested (single per-process)
+try:
+    if persisted_state.get("background_refresh_enabled") and not BACKGROUND_THREAD_STARTED:
+        def _make_params_fn():
+            def fn():
+                return {
+                    "tickers": tickers,
+                    "period": period,
+                    "sma_fast": sma_fast,
+                    "sma_med": sma_med,
+                    "ema_slow": ema_slow,
+                    "lookback_dip": lookback_dip,
+                    "window_52w": window_52w,
+                    "bought_tickers": persisted_state.get("bought_tickers", []),
+                    "entry_prices_map": parse_entry_prices(persisted_state.get("entry_prices_text", "")),
+                    "stop_loss_pct": persisted_state.get("stop_loss_pct", stop_loss_pct),
+                    "run_backtest_flag": persisted_state.get("run_backtest_flag", run_backtest_flag),
+                    "entry_prices_text": persisted_state.get("entry_prices_text", "")
+                }
+            return fn
+
+        interval = int(persisted_state.get("background_refresh_interval", 60))
+        t = threading.Thread(target=_background_loop, args=(interval, _make_params_fn()), daemon=True)
+        t.start()
+        BACKGROUND_THREAD_STARTED = True
+except Exception:
+    pass
 
 # parse entry prices text into dict
 def parse_entry_prices(text):
@@ -391,30 +485,22 @@ def parse_entry_prices(text):
 
 entry_prices_map = parse_entry_prices(entry_prices_text)
 
-st.write(f"📊 Processing {len(tickers)} tickers | Mode: **{view_mode}**")
-st.markdown("---")
 
-# -------------------------
-# Main processing
-# -------------------------
-if run_btn:
+def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_dip, window_52w,
+                        bought_tickers, entry_prices_map, stop_loss_pct, run_backtest_flag):
+    """Run the full fetch/compute/backtest loop without Streamlit UI calls.
+    Returns dict with results_rows, diagnostics, trades_summary, equity_curves, last_refresh
+    """
     results_rows = []
     trades_summary = {}
     equity_curves = {}
     diagnostics = {"failed_downloads": [], "too_short": [], "exceptions": []}
 
-    # Batch fetch all tickers
     batch_results, batch_diag = batch_fetch_tickers(tickers, period=period, interval="1d", batch_size=8, max_retries=3)
     diagnostics["failed_downloads"].extend(batch_diag.get("failed", []))
     diagnostics["failed_downloads"].extend(batch_diag.get("empty", []))
 
-    progress = st.progress(0)
-    status = st.empty()
-    total = len(tickers)
-
-    for idx, ticker in enumerate(tickers):
-        status.text(f"Processing {idx+1}/{total}: {ticker}")
-        progress.progress(int((idx / total) * 100))
+    for ticker in tickers:
         try:
             df = batch_results.get(ticker, pd.DataFrame())
             if df is None or df.empty:
@@ -452,62 +538,43 @@ if run_btn:
 
             df = compute_indicators(df, sma_fast, sma_med, ema_slow, lookback_dip, window_52w)
 
-            if view_mode == "Historical":
-                buy_idx = df.index[df["buy_signal"] == True]
-                if len(buy_idx) > 0:
-                    chosen_date = buy_idx[-1]
-                    row = df.loc[chosen_date]
-                    date_val = chosen_date.date()
-                else:
-                    row = df.iloc[-1]
-                    date_val = df.index[-1].date()
-            else:
-                row = df.iloc[-1]
-                date_val = df.index[-1].date()
+            # use latest row for current/historical in background run (approx)
+            row = df.iloc[-1]
+            date_val = df.index[-1].date()
 
-            if view_mode == "Current":
-                evals = evaluate_current_from_latest(row, recent_price_override)
-                c1 = evals["cond1"]; c2 = evals["cond2"]; c3 = evals["cond3"]
-                c4 = evals["cond4"]; c5 = evals["cond5"]; breakout = evals["breakout"]
-                buy_signal = evals["buy_signal"]; close_val = evals["Close"]
-            else:
-                c1 = bool(row.get("cond1_sma150_gt_ema220", False))
-                c2 = bool(row.get("cond2_close_gt_sma50", False))
-                c3 = bool(row.get("cond3_sma50_gt_sma150", False))
-                c4 = bool(row.get("cond4_close_gt_1.25_low", False))
-                c5 = bool(row.get("cond5_recent_dip", False))
-                breakout = bool(row.get("breakout", False))
-                buy_signal = bool(row.get("buy_signal", False))
-                close_val = float(row.get("Close", np.nan)) if not np.isnan(row.get("Close", np.nan)) else None
+            c1 = bool(row.get("cond1_sma150_gt_ema220", False))
+            c2 = bool(row.get("cond2_close_gt_sma50", False))
+            c3 = bool(row.get("cond3_sma50_gt_sma150", False))
+            c4 = bool(row.get("cond4_close_gt_1.25_low", False))
+            c5 = bool(row.get("cond5_recent_dip", False))
+            breakout = bool(row.get("breakout", False))
+            buy_signal = bool(row.get("buy_signal", False))
+            close_val = float(row.get("Close", np.nan)) if not np.isnan(row.get("Close", np.nan)) else None
 
             cond_checks = {
-                "C1": c1 if use_c1 else True,
-                "C2": c2 if use_c2 else True,
-                "C3": c3 if use_c3 else True,
-                "C4": c4 if use_c4 else True,
-                "C5": c5 if use_c5 else True,
-                "Breakout": breakout if use_breakout else True,
+                "C1": c1,
+                "C2": c2,
+                "C3": c3,
+                "C4": c4,
+                "C5": c5,
+                "Breakout": breakout,
             }
             matches = all(cond_checks.values())
 
-            # SELL trigger logic for bought tickers:
             sell_trigger = False
             sell_reasons = []
             if ticker in bought_tickers:
-                # 1) EMA rule: current price below EMA slow
                 ema_val = float(row.get("ema_220", np.nan)) if not np.isnan(row.get("ema_220", np.nan)) else None
                 if ema_val is not None and close_val is not None and not np.isnan(ema_val):
                     if close_val < ema_val:
                         sell_trigger = True
                         sell_reasons.append("below_ema")
-                # 2) Stop-loss rule: requires entry price provided in sidebar mapping
                 entry_price = entry_prices_map.get(ticker)
                 if entry_price is not None and close_val is not None:
                     stop_price = entry_price * (1 - stop_loss_pct)
                     if close_val <= stop_price:
                         sell_trigger = True
                         sell_reasons.append("stop_loss")
-                # If no entry price provided, stop-loss check is skipped (only EMA applies)
 
             sell_reason_str = ";".join(sell_reasons) if sell_reasons else None
 
@@ -547,8 +614,80 @@ if run_btn:
             })
             continue
 
-    progress.progress(100)
-    status.text("Processing complete")
+    return {
+        "results_rows": results_rows,
+        "diagnostics": diagnostics,
+        "trades_summary": trades_summary,
+        "equity_curves": equity_curves,
+        "last_refresh": datetime.now().isoformat()
+    }
+
+
+# Background thread control
+BACKGROUND_THREAD_STARTED = False
+
+def _background_loop(interval_minutes, get_params_fn):
+    while True:
+        try:
+            params = get_params_fn()
+            res = process_all_tickers(**params)
+            # persist results to file
+            state = load_persisted_state() or {}
+            state.update(res)
+            state["bought_tickers"] = params.get("bought_tickers", [])
+            state["entry_prices_text"] = params.get("entry_prices_text", state.get("entry_prices_text", ""))
+            state["last_refresh"] = res.get("last_refresh")
+            save_persisted_state(state)
+        except Exception:
+            pass
+        time.sleep(max(60, int(interval_minutes) * 60))
+
+st.write(f"📊 Processing {len(tickers)} tickers | Mode: **{view_mode}**")
+st.markdown("---")
+
+# -------------------------
+# Main processing
+# -------------------------
+if run_btn:
+    # Call non-UI processing function and persist results
+    with st.spinner("Running analysis..."):
+        params = {
+            "tickers": tickers,
+            "period": period,
+            "sma_fast": sma_fast,
+            "sma_med": sma_med,
+            "ema_slow": ema_slow,
+            "lookback_dip": lookback_dip,
+            "window_52w": window_52w,
+            "bought_tickers": bought_tickers,
+            "entry_prices_map": entry_prices_map,
+            "stop_loss_pct": stop_loss_pct,
+            "run_backtest_flag": run_backtest_flag
+        }
+        res = process_all_tickers(**params)
+        st.session_state.results_rows = res["results_rows"]
+        st.session_state.diagnostics = res["diagnostics"]
+        st.session_state.trades_summary = res["trades_summary"]
+        st.session_state.equity_curves = res["equity_curves"]
+        # persist results for next visits
+        state = load_persisted_state() or {}
+        state.update(res)
+        state["bought_tickers"] = bought_tickers
+        state["entry_prices_text"] = entry_prices_text
+        save_persisted_state(state)
+        st.success("Analysis complete")
+
+if st.session_state.results_rows:
+    results_df = pd.DataFrame(st.session_state.results_rows)
+    diagnostics = st.session_state.diagnostics
+    trades_summary = st.session_state.trades_summary
+    equity_curves = st.session_state.equity_curves
+
+    # Ensure latest bought selections are reflected even when cached rows exist
+    if "Bought" in results_df.columns:
+        results_df["Bought"] = results_df["Symbol"].isin(bought_tickers)
+    else:
+        results_df["Bought"] = results_df["Symbol"].isin(bought_tickers)
 
     # Display diagnostics
     st.markdown("### Diagnostics summary")
@@ -565,17 +704,59 @@ if run_btn:
         st.error("Some tickers raised exceptions (first 10):")
         st.write(diagnostics["exceptions"][:10])
 
-    # Results table
-    results_df = pd.DataFrame(results_rows)
+    # Results table with extra filters
     show_only_matches = st.checkbox("Show only tickers that match enabled filters (MatchesFilters == True)", value=False)
-    display_df = results_df[results_df["MatchesFilters"] == True] if show_only_matches else results_df
+    show_recent = st.checkbox("Show only tickers with Date within last 30 days", value=False)
+    show_c1 = st.checkbox("Show only tickers satisfying C1 (150 SMA > 220 EMA)", value=False)
+    show_c2 = st.checkbox("Show only tickers satisfying C2 (Close > 50 SMA)", value=False)
+    show_c3 = st.checkbox("Show only tickers satisfying C3 (50 SMA > 150 SMA)", value=False)
+    show_c4 = st.checkbox("Show only tickers satisfying C4 (Close > 1.25 * 52w Low)", value=False)
+    show_c5 = st.checkbox("Show only tickers satisfying C5 (Recent dip below EMA occurred)", value=False)
+    show_breakout = st.checkbox("Show only tickers satisfying Breakout (Close >= prior 52w high)", value=False)
+    keep_bought = st.checkbox("Keep bought tickers visible even if other filters fail", value=True)
+    hide_bought = st.checkbox("Hide bought tickers entirely", value=False)
 
+    display_df = results_df.copy()
+    filter_mask = pd.Series(True, index=display_df.index)
+
+    if show_only_matches:
+        filter_mask &= display_df["MatchesFilters"] == True
+
+    if show_recent and "Date" in display_df.columns:
+        from datetime import datetime, timedelta
+        cutoff = datetime.now().date() - timedelta(days=30)
+        filter_mask &= display_df["Date"].notna() & (display_df["Date"] >= cutoff)
+
+    if show_c1:
+        filter_mask &= display_df["C1"] == True
+    if show_c2:
+        filter_mask &= display_df["C2"] == True
+    if show_c3:
+        filter_mask &= display_df["C3"] == True
+    if show_c4:
+        filter_mask &= display_df["C4"] == True
+    if show_c5:
+        filter_mask &= display_df["C5"] == True
+    if show_breakout:
+        filter_mask &= display_df["Breakout"] == True
+
+    if keep_bought:
+        filter_mask |= display_df["Bought"] == True
+    if hide_bought:
+        filter_mask &= display_df["Bought"] == False
+
+    display_df = display_df[filter_mask]
+
+    # Final display
     if display_df.empty:
-        st.info("No tickers matched the enabled filters or no data available.")
+        st.info("No tickers matched the selected filters or no data available.")
     else:
-        # show Sell Trigger and Sell Reason prominently
-        cols_order = ["Symbol","Date","Close","Bought","Sell Trigger","Sell Reason","MatchesFilters","Buy Signal","C1","C2","C3","C4","C5","Breakout","DownloadStatus"]
+        cols_order = [
+            "Symbol","Date","Close","Bought","Sell Trigger","Sell Reason",
+            "MatchesFilters","Buy Signal","C1","C2","C3","C4","C5","Breakout","DownloadStatus"
+        ]
         cols_present = [c for c in cols_order if c in display_df.columns]
+
         if view_mode == "Current":
             st.subheader(f"Results — {view_mode} mode (showing {len(display_df)} rows)")
             st.dataframe(display_df.set_index("Symbol")[cols_present[2:]])
@@ -583,7 +764,6 @@ if run_btn:
             st.subheader(f"Results — {view_mode} mode (showing {len(display_df)} rows)")
             st.dataframe(display_df[cols_present].sort_values(["Symbol","Date"], ascending=[True, False]))
 
-    # Backtest summaries
     if run_backtest_flag and trades_summary:
         st.subheader("Backtest summaries")
         for t, perf in trades_summary.items():
@@ -598,7 +778,3 @@ if run_btn:
         if equity_curves:
             combined = pd.DataFrame({t: s for t, s in equity_curves.items()})
             st.line_chart(combined.ffill().fillna(0))
-
-    st.success("Analysis complete")
-else:
-    st.info("Adjust inputs in the sidebar and click Run Analysis")
