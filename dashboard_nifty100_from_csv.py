@@ -628,7 +628,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
         "diagnostics": diagnostics,
         "trades_summary": trades_summary,
         "equity_curves": equity_curves,
-        "last_refresh": datetime.now().isoformat()
+        "last_refresh": datetime.now()
     }
 
 
