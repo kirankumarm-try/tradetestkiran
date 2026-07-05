@@ -321,7 +321,7 @@ def run_backtest(df, alloc_pct, stop_loss_pct, take_profit_pct, max_hold_days, i
         exit_date = last_date
         pnl = (exit_price - position['entry_price']) * position['shares']
         ret = pnl / (position['entry_price'] * position['shares'])
-        trades.append({'entry_date': position['entry_date'],'entry_price': position['entry_price'],'exit_date': exit_date,'exit_price': float(exit_price),'shares': position['shares'],'pnl': float(pnl),'return': float(ret),'reason': 'closed_end'})
+        trades.append({'entry_date': position['entry_date'],'entry_price': position['entry_price'],'exit_date': exit_date,'exit_price': float(exit_price),'shares': position['shares'],'pnl': float(pnl),'return': float(ret),'reason': 'end_of_data'})
         cash += position['shares'] * exit_price
         position = None
         equity.loc[last_date] = cash
