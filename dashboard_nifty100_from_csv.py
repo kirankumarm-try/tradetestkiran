@@ -349,42 +349,56 @@ st.title("NIFTY100 Strategy Backtest + Sell Trigger (top100.csv)")
 tickers = get_tickers()
 period = "2y"  # fixed
 persisted_state = load_persisted_state()
-default_bought = [t for t in persisted_state.get("bought_tickers", []) if t in tickers]
 
+# Initialize session state with persisted values
 if "results_rows" not in st.session_state:
-    st.session_state.results_rows = []
-    st.session_state.diagnostics = {"failed_downloads": [], "too_short": [], "exceptions": []}
-    st.session_state.trades_summary = {}
-    st.session_state.equity_curves = {}
-    st.session_state.last_refresh = None
+    st.session_state.results_rows = persisted_state.get("results_rows", [])
+    st.session_state.diagnostics = persisted_state.get("diagnostics", {"failed_downloads": [], "too_short": [], "exceptions": []})
+    st.session_state.trades_summary = persisted_state.get("trades_summary", {})
+    st.session_state.equity_curves = persisted_state.get("equity_curves", {})
+    st.session_state.last_refresh = persisted_state.get("last_refresh")
+
+# Get persisted filter states
+default_bought = [t for t in persisted_state.get("bought_tickers", []) if t in tickers]
+default_sma_fast = persisted_state.get("sma_fast", DEFAULT_SMA_FAST)
+default_sma_med = persisted_state.get("sma_med", DEFAULT_SMA_MED)
+default_ema_slow = persisted_state.get("ema_slow", DEFAULT_EMA_SLOW)
+default_window_52w = persisted_state.get("window_52w", DEFAULT_52W_WINDOW)
+default_lookback_dip = persisted_state.get("lookback_dip", DEFAULT_LOOKBACK_DIP)
+default_stop_loss_pct = persisted_state.get("stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
+default_view_mode = persisted_state.get("view_mode", "Historical")
+default_run_backtest = persisted_state.get("run_backtest_flag", False)
+default_auto_refresh = persisted_state.get("auto_refresh", False)
+default_show_only_matches = persisted_state.get("show_only_matches", False)
+default_show_recent = persisted_state.get("show_recent", False)
+default_show_c1 = persisted_state.get("show_c1", False)
+default_show_c2 = persisted_state.get("show_c2", False)
+default_show_c3 = persisted_state.get("show_c3", False)
+default_show_c4 = persisted_state.get("show_c4", False)
+default_show_c5 = persisted_state.get("show_c5", False)
+default_show_breakout = persisted_state.get("show_breakout", False)
+default_keep_bought = persisted_state.get("keep_bought", True)
+default_hide_bought = persisted_state.get("hide_bought", False)
 
 with st.sidebar:
     st.header("Inputs (kept)")
     st.markdown("**Indicator settings**")
-    sma_fast = st.number_input("SMA Fast", min_value=5, max_value=200, value=DEFAULT_SMA_FAST, step=1)
-    sma_med = st.number_input("SMA Medium", min_value=20, max_value=400, value=DEFAULT_SMA_MED, step=1)
-    ema_slow = st.number_input("EMA Slow (for sell trigger)", min_value=50, max_value=500, value=DEFAULT_EMA_SLOW, step=1)
-    window_52w = st.number_input("52W Window (days)", min_value=100, max_value=365, value=DEFAULT_52W_WINDOW, step=1)
-    lookback_dip = st.number_input("Lookback dip (days)", min_value=10, max_value=365, value=DEFAULT_LOOKBACK_DIP, step=1)
+    sma_fast = st.number_input("SMA Fast", min_value=5, max_value=200, value=default_sma_fast, step=1)
+    sma_med = st.number_input("SMA Medium", min_value=20, max_value=400, value=default_sma_med, step=1)
+    ema_slow = st.number_input("EMA Slow (for sell trigger)", min_value=50, max_value=500, value=default_ema_slow, step=1)
+    window_52w = st.number_input("52W Window (days)", min_value=100, max_value=365, value=default_window_52w, step=1)
+    lookback_dip = st.number_input("Lookback dip (days)", min_value=10, max_value=365, value=default_lookback_dip, step=1)
 
     st.markdown("**View Mode**")
-    view_mode = st.radio("Select view mode", ["Historical","Current"], index=0)
+    view_mode = st.radio("Select view mode", ["Historical","Current"], index=0 if default_view_mode == "Historical" else 1)
 
     st.markdown("**Portfolio**")
     bought_tickers = st.multiselect("Bought tickers (mark those you own)", options=tickers, default=default_bought)
-
-    if bought_tickers != default_bought:
-        persisted_state["bought_tickers"] = bought_tickers
-        save_persisted_state(persisted_state)
 
     st.markdown("**Optional: per-ticker entry prices (for stop-loss checks)**")
     st.markdown("Enter as comma-separated pairs: SYMBOL:ENTRY_PRICE, e.g. RELIANCE.NS:2500, TCS.NS:3200")
     default_entry_text = persisted_state.get("entry_prices_text", "")
     entry_prices_text = st.text_area("Entry prices (optional)", value=default_entry_text, height=80)
-    if entry_prices_text != default_entry_text:
-        persisted_state["entry_prices_text"] = entry_prices_text
-        save_persisted_state(persisted_state)
-    # parse entry prices later
 
     recent_price_override = None
     if view_mode == "Current":
@@ -404,16 +418,16 @@ with st.sidebar:
     use_breakout = st.checkbox("Require Breakout (Close >= prior 52w high)", value=True)
 
     st.markdown("**Risk / Backtest**")
-    stop_loss_pct = st.slider("Stop loss % (used for stop-loss check vs entry price)", min_value=1, max_value=50, value=int(DEFAULT_STOP_LOSS_PCT*100)) / 100.0
-    run_backtest_flag = st.checkbox("Run backtest for matching tickers", value=False)
+    stop_loss_pct = st.slider("Stop loss % (used for stop-loss check vs entry price)", min_value=1, max_value=50, value=int(default_stop_loss_pct*100)) / 100.0
+    run_backtest_flag = st.checkbox("Run backtest for matching tickers", value=default_run_backtest)
 
     st.markdown("**Refresh controls**")
-    auto_refresh = st.checkbox("Auto-refresh every hour", value=False)
+    auto_refresh = st.checkbox("Auto-refresh every hour", value=default_auto_refresh)
     run_btn_manual = st.button("🔄 Run Analysis")
 
     # Use st_autorefresh with proper parameters for v1.0.1
     if auto_refresh:
-        st_autorefresh(interval=3600, limit=None, key="auto_refresh")
+        st_autorefresh(interval=3600)
         run_btn = True
     else:
         run_btn = run_btn_manual
@@ -430,10 +444,6 @@ with st.sidebar:
     bg_interval_default = persisted_state.get("background_refresh_interval", 60)
     background_refresh_enabled = st.checkbox("Enable background server refresh (persist refreshed results)", value=bg_default)
     background_refresh_interval = st.number_input("Background refresh interval (minutes)", min_value=1, max_value=1440, value=int(bg_interval_default), step=1)
-    if background_refresh_enabled != bg_default or background_refresh_interval != bg_interval_default:
-        persisted_state["background_refresh_enabled"] = bool(background_refresh_enabled)
-        persisted_state["background_refresh_interval"] = int(background_refresh_interval)
-        save_persisted_state(persisted_state)
 
 # Start background thread if requested (single per-process)
 try:
@@ -668,11 +678,33 @@ if run_btn:
         st.session_state.diagnostics = res["diagnostics"]
         st.session_state.trades_summary = res["trades_summary"]
         st.session_state.equity_curves = res["equity_curves"]
-        # persist results for next visits
+        st.session_state.last_refresh = res["last_refresh"]
+        # persist results and settings for next visits
         state = load_persisted_state() or {}
         state.update(res)
         state["bought_tickers"] = bought_tickers
         state["entry_prices_text"] = entry_prices_text
+        state["sma_fast"] = sma_fast
+        state["sma_med"] = sma_med
+        state["ema_slow"] = ema_slow
+        state["window_52w"] = window_52w
+        state["lookback_dip"] = lookback_dip
+        state["stop_loss_pct"] = stop_loss_pct
+        state["view_mode"] = view_mode
+        state["run_backtest_flag"] = run_backtest_flag
+        state["auto_refresh"] = auto_refresh
+        state["background_refresh_enabled"] = background_refresh_enabled
+        state["background_refresh_interval"] = background_refresh_interval
+        state["show_only_matches"] = default_show_only_matches
+        state["show_recent"] = default_show_recent
+        state["show_c1"] = default_show_c1
+        state["show_c2"] = default_show_c2
+        state["show_c3"] = default_show_c3
+        state["show_c4"] = default_show_c4
+        state["show_c5"] = default_show_c5
+        state["show_breakout"] = default_show_breakout
+        state["keep_bought"] = default_keep_bought
+        state["hide_bought"] = default_hide_bought
         save_persisted_state(state)
         st.success("Analysis complete")
 
@@ -704,16 +736,30 @@ if st.session_state.results_rows:
         st.write(diagnostics["exceptions"][:10])
 
     # Results table with extra filters
-    show_only_matches = st.checkbox("Show only tickers that match enabled filters (MatchesFilters == True)", value=False)
-    show_recent = st.checkbox("Show only tickers with Date within last 30 days", value=False)
-    show_c1 = st.checkbox("Show only tickers satisfying C1 (150 SMA > 220 EMA)", value=False)
-    show_c2 = st.checkbox("Show only tickers satisfying C2 (Close > 50 SMA)", value=False)
-    show_c3 = st.checkbox("Show only tickers satisfying C3 (50 SMA > 150 SMA)", value=False)
-    show_c4 = st.checkbox("Show only tickers satisfying C4 (Close > 1.25 * 52w Low)", value=False)
-    show_c5 = st.checkbox("Show only tickers satisfying C5 (Recent dip below EMA occurred)", value=False)
-    show_breakout = st.checkbox("Show only tickers satisfying Breakout (Close >= prior 52w high)", value=False)
-    keep_bought = st.checkbox("Keep bought tickers visible even if other filters fail", value=True)
-    hide_bought = st.checkbox("Hide bought tickers entirely", value=False)
+    show_only_matches = st.checkbox("Show only tickers that match enabled filters (MatchesFilters == True)", value=default_show_only_matches)
+    show_recent = st.checkbox("Show only tickers with Date within last 30 days", value=default_show_recent)
+    show_c1 = st.checkbox("Show only tickers satisfying C1 (150 SMA > 220 EMA)", value=default_show_c1)
+    show_c2 = st.checkbox("Show only tickers satisfying C2 (Close > 50 SMA)", value=default_show_c2)
+    show_c3 = st.checkbox("Show only tickers satisfying C3 (50 SMA > 150 SMA)", value=default_show_c3)
+    show_c4 = st.checkbox("Show only tickers satisfying C4 (Close > 1.25 * 52w Low)", value=default_show_c4)
+    show_c5 = st.checkbox("Show only tickers satisfying C5 (Recent dip below EMA occurred)", value=default_show_c5)
+    show_breakout = st.checkbox("Show only tickers satisfying Breakout (Close >= prior 52w high)", value=default_show_breakout)
+    keep_bought = st.checkbox("Keep bought tickers visible even if other filters fail", value=default_keep_bought)
+    hide_bought = st.checkbox("Hide bought tickers entirely", value=default_hide_bought)
+
+    # Save filter states
+    state = load_persisted_state() or {}
+    state["show_only_matches"] = show_only_matches
+    state["show_recent"] = show_recent
+    state["show_c1"] = show_c1
+    state["show_c2"] = show_c2
+    state["show_c3"] = show_c3
+    state["show_c4"] = show_c4
+    state["show_c5"] = show_c5
+    state["show_breakout"] = show_breakout
+    state["keep_bought"] = keep_bought
+    state["hide_bought"] = hide_bought
+    save_persisted_state(state)
 
     display_df = results_df.copy()
     filter_mask = pd.Series(True, index=display_df.index)
