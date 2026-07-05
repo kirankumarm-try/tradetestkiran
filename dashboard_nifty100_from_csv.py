@@ -411,11 +411,12 @@ with st.sidebar:
     auto_refresh = st.checkbox("Auto-refresh every hour", value=False)
     run_btn_manual = st.button("🔄 Run Analysis")
 
-    auto_refresh_count = 0
+    # Use st_autorefresh with proper parameters for v1.0.1
     if auto_refresh:
-        auto_refresh_count = st_autorefresh(interval=3600000, limit=None, key="auto_refresh")
-
-    run_btn = run_btn_manual or auto_refresh_count > 0
+        st_autorefresh(interval=3600, limit=None, key="auto_refresh")
+        run_btn = True
+    else:
+        run_btn = run_btn_manual
 
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = None
@@ -423,8 +424,6 @@ with st.sidebar:
         st.session_state.last_refresh = datetime.now()
     if st.session_state.last_refresh is not None:
         st.sidebar.markdown(f"**Last refresh:** {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
-    if auto_refresh and auto_refresh_count > 0:
-        st.sidebar.info("Auto refresh triggered.")
 
     # Background server-side refresh options (persists results even when no client connected)
     bg_default = persisted_state.get("background_refresh_enabled", False)
