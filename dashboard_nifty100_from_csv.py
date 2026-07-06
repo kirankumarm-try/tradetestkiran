@@ -566,14 +566,14 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 c4 = evals["cond4"]; c5 = evals["cond5"]; breakout = evals["breakout"]
                 buy_signal = evals["buy_signal"]; close_val = evals["Close"]
             else:
-            c1 = bool(row.get("cond1_sma150_gt_ema220", False))
-            c2 = bool(row.get("cond2_close_gt_sma50", False))
-            c3 = bool(row.get("cond3_sma50_gt_sma150", False))
-            c4 = bool(row.get("cond4_close_gt_1.25_low", False))
-            c5 = bool(row.get("cond5_recent_dip", False))
-            breakout = bool(row.get("breakout", False))
-            buy_signal = bool(row.get("buy_signal", False))
-            close_val = float(row.get("Close", np.nan)) if not np.isnan(row.get("Close", np.nan)) else None
+                c1 = bool(row.get("cond1_sma150_gt_ema220", False))
+                c2 = bool(row.get("cond2_close_gt_sma50", False))
+                c3 = bool(row.get("cond3_sma50_gt_sma150", False))
+                c4 = bool(row.get("cond4_close_gt_1.25_low", False))
+                c5 = bool(row.get("cond5_recent_dip", False))
+                breakout = bool(row.get("breakout", False))
+                buy_signal = bool(row.get("buy_signal", False))
+                close_val = float(row.get("Close", np.nan)) if not np.isnan(row.get("Close", np.nan)) else None
 
             cond_checks = {
                 "C1": c1,
