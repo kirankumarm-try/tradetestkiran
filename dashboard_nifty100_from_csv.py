@@ -547,10 +547,25 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
 
             df = compute_indicators(df, sma_fast, sma_med, ema_slow, lookback_dip, window_52w)
 
-            # use latest row for current/historical in background run (approx)
-            row = df.iloc[-1]
-            date_val = df.index[-1].date()
+            if view_mode == "Historical":
+                buy_idx = df.index[df["buy_signal"] == True]
+                if len(buy_idx) > 0:
+                    chosen_date = buy_idx[-1]
+                    row = df.loc[chosen_date]
+                    date_val = chosen_date.date()
+                else:
+                    row = df.iloc[-1]
+                    date_val = df.index[-1].date()
+            else:
+                row = df.iloc[-1]
+                date_val = df.index[-1].date()
 
+            if view_mode == "Current":
+                evals = evaluate_current_from_latest(row, recent_price_override)
+                c1 = evals["cond1"]; c2 = evals["cond2"]; c3 = evals["cond3"]
+                c4 = evals["cond4"]; c5 = evals["cond5"]; breakout = evals["breakout"]
+                buy_signal = evals["buy_signal"]; close_val = evals["Close"]
+            else:
             c1 = bool(row.get("cond1_sma150_gt_ema220", False))
             c2 = bool(row.get("cond2_close_gt_sma50", False))
             c3 = bool(row.get("cond3_sma50_gt_sma150", False))
@@ -628,7 +643,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
         "diagnostics": diagnostics,
         "trades_summary": trades_summary,
         "equity_curves": equity_curves,
-        "last_refresh": datetime.now().isoformat()
+        "last_refresh": datetime.now()
     }
 
 
