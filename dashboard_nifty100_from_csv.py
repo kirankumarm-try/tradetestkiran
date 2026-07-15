@@ -655,40 +655,49 @@ if not display_df.empty and "Symbol" in display_df.columns:
 
 import matplotlib.pyplot as plt
 
-if "RSI" in df_selected.columns:
-    fig, ax1 = plt.subplots(figsize=(10,5))
+# --- RSI Chart Section ---
+if not display_df.empty and "Symbol" in display_df.columns:
+    selected_symbol = st.selectbox("Select ticker to view RSI chart", display_df["Symbol"].unique())
 
-    # Plot price on left axis
-    ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
-    ax1.set_ylabel("Price", color="blue")
-    ax1.tick_params(axis="y", labelcolor="blue")
+    if selected_symbol:
+        # Fetch and compute indicators for the selected ticker
+        df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
+        df_selected = compute_indicators(df_selected)
 
-    # Plot RSI on right axis
-    ax2 = ax1.twinx()
-    ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
-    ax2.axhline(70, color="gray", linestyle="--")
-    ax2.axhline(30, color="gray", linestyle="--")
-    ax2.set_ylabel("RSI", color="red")
-    ax2.tick_params(axis="y", labelcolor="red")
+        if "RSI" in df_selected.columns:
+            st.subheader(f"RSI Trend for {selected_symbol}")
 
-    # --- Add Buy/Sell markers ---
-    # Get Buy/Sell dates from your results table
-    buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
-    sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
+            import matplotlib.pyplot as plt
+            fig, ax1 = plt.subplots(figsize=(10,5))
 
-    # Convert to datetime if not None
-    import pandas as pd
-    if buy_date:
-        buy_dt = pd.to_datetime(buy_date)
-        ax2.axvline(buy_dt, color="green", linestyle="--", label="Buy Date")
-        ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=100)
+            # Price on left axis
+            ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
+            ax1.set_ylabel("Price", color="blue")
+            ax1.tick_params(axis="y", labelcolor="blue")
 
-    if sell_date:
-        sell_dt = pd.to_datetime(sell_date)
-        ax2.axvline(sell_dt, color="red", linestyle="--", label="Sell Date")
-        ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=100)
+            # RSI on right axis
+            ax2 = ax1.twinx()
+            ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
+            ax2.axhline(70, color="gray", linestyle="--")
+            ax2.axhline(30, color="gray", linestyle="--")
+            ax2.set_ylabel("RSI", color="red")
+            ax2.tick_params(axis="y", labelcolor="red")
 
-    # Legend
-    fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
-    fig.tight_layout()
-    st.pyplot(fig)
+            # Add Buy/Sell markers from display_df
+            buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
+            sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
+
+            import pandas as pd
+            if buy_date:
+                buy_dt = pd.to_datetime(buy_date)
+                ax2.axvline(buy_dt, color="green", linestyle="--", label="Buy Date")
+                ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=100)
+
+            if sell_date:
+                sell_dt = pd.to_datetime(sell_date)
+                ax2.axvline(sell_dt, color="red", linestyle="--", label="Sell Date")
+                ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=100)
+
+            fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
+            fig.tight_layout()
+            st.pyplot(fig)
