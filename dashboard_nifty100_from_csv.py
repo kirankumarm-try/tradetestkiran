@@ -221,7 +221,7 @@ def find_sell_after_buy(df, buy_date, entry_price, stop_loss_pct):
 # Processing pipeline (produces Buy Date/Price, Sell Date/Price, Recent Price)
 # -------------------------
 def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_dip, window_52w,
-                        entry_prices_map, stop_loss_pct, run_backtest_flag, view_mode="Historical", recent_price_override=None,buy_rsi = None, sell_rsi = None, recent_rsi_override = None, recent_rsi = None):
+                        entry_prices_map, stop_loss_pct, run_backtest_flag, view_mode="Historical", recent_price_override=None, recent_rsi_override=None):
     results_rows = []
     diagnostics = {"failed_downloads": [], "too_short": [], "exceptions": []}
 
@@ -230,24 +230,33 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
     diagnostics["failed_downloads"].extend(batch_diag.get("empty", []))
 
     for ticker in tickers:
+        # initialize per-ticker values
+        buy_rsi = None
+        sell_rsi = None
+        recent_rsi = None
+        buy_price = None
+        sell_price = None
+        buy_date = None
+        sell_date = None
+
         try:
             df = batch_results.get(ticker, pd.DataFrame())
             if df is None or df.empty:
                 results_rows.append({
                     "Symbol": ticker,
                     "Buy Date": None,
-                    "buy_rsi" : None,
                     "Buy Price": None,
                     "Recent Price": None,
                     "Recent RSI": None,
+                    "Buy RSI": None,
                     "Buy Signal": False,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                     "Breakout": False,
                     "MatchesFilters": False,
                     "DownloadStatus": "no_data",
                     "Sell Date": None,
-                    "sell_rsi": None,
                     "Sell Price": None,
+                    "Sell RSI": None,
                     "Sell Reason": None
                 })
                 continue
@@ -257,18 +266,18 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 results_rows.append({
                     "Symbol": ticker,
                     "Buy Date": None,
-                    "buy_rsi" : None,
                     "Buy Price": None,
                     "Recent Price": None,
                     "Recent RSI": None,
+                    "Buy RSI": None,
                     "Buy Signal": False,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                     "Breakout": False,
                     "MatchesFilters": False,
                     "DownloadStatus": "too_short",
                     "Sell Date": None,
-                    "sell_rsi": None,
                     "Sell Price": None,
+                    "Sell RSI": None,
                     "Sell Reason": None
                 })
                 continue
@@ -282,15 +291,13 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     buy_ts = buy_idx[-1]
                     buy_row = df.loc[buy_ts]
                     buy_date = buy_ts.date()
-                    if buy_date is not None:
-                        try:
-                            buy_rsi = float(df.loc[pd.to_datetime(buy_date), "RSI"])
-                        except Exception:
-                            buy_rsi = None
+                    try:
+                        buy_rsi = float(df.loc[buy_ts, "RSI"]) if "RSI" in df.columns and not pd.isna(df.loc[buy_ts, "RSI"]) else None
+                    except Exception:
+                        buy_rsi = None
                     # prefer Close on buy date; if NaN use next day's Open if available
                     buy_price = buy_row.get("Close", np.nan)
                     if pd.isna(buy_price):
-                        # try next trading day open
                         next_idx = df.index[df.index > buy_ts]
                         if len(next_idx) > 0:
                             try:
@@ -305,24 +312,25 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     buy_row = df.iloc[-1]
                     buy_date = buy_ts.date()
                     buy_price = float(buy_row.get("Close", np.nan)) if not pd.isna(buy_row.get("Close", np.nan)) else None
+                    try:
+                        buy_rsi = float(df.loc[buy_ts, "RSI"]) if "RSI" in df.columns and not pd.isna(df.loc[buy_ts, "RSI"]) else None
+                    except Exception:
+                        buy_rsi = None
             else:
                 # Current mode: use latest row as buy date (display)
                 buy_ts = df.index[-1]
                 buy_row = df.iloc[-1]
                 buy_date = buy_ts.date()
-                if buy_date is not None:
-                        try:
-                            buy_rsi = float(df.loc[pd.to_datetime(buy_date), "RSI"])
-                        except Exception:
-                            buy_rsi = None
-                # If user provided recent_price_override, use that as recent price; buy price use Close
+                try:
+                    buy_rsi = float(df.loc[buy_ts, "RSI"]) if "RSI" in df.columns and not pd.isna(df.loc[buy_ts, "RSI"]) else None
+                except Exception:
+                    buy_rsi = None
                 buy_price = float(buy_row.get("Close", np.nan)) if not pd.isna(buy_row.get("Close", np.nan)) else None
 
             # Recent price (latest Close or override)
-            # Recent price (latest Close or override)
             if recent_price_override is not None:
                 recent_price = float(recent_price_override) if pd.notna(recent_price_override) else None
-                recent_rsi = float(recent_rsi_override) if pd.notna(recent_rsi_override) else None
+                recent_rsi = float(recent_rsi_override) if recent_rsi_override is not None and pd.notna(recent_rsi_override) else None
             else:
                 if df is not None and not df.empty:
                     latest_row = df.iloc[-1]
@@ -331,7 +339,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 else:
                     recent_price = None
                     recent_rsi = None
-            
+
             # Compute boolean conditions from the chosen row (safe guard)
             if df is not None and not df.empty:
                 chosen_row = buy_row if 'buy_row' in locals() else df.iloc[-1]
@@ -349,19 +357,15 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
             matches = all(cond_checks.values())
 
             # Find sell date/price by scanning forward from buy_date if buy_date exists
-            sell_date = None
-            sell_price = None
-            sell_reason = None
             entry_price = entry_prices_map.get(ticker)
             if buy_date is not None:
                 sd, sp, reason = find_sell_after_buy(df, buy_date, entry_price, stop_loss_pct)
                 if sd is not None:
                     sell_date = sd
-                    if sell_date is not None:
-                        try:
-                            sell_rsi = float(df.loc[pd.to_datetime(sell_date), "RSI"])
-                        except Exception:
-                            sell_rsi = None
+                    try:
+                        sell_rsi = float(df.loc[pd.to_datetime(sd), "RSI"]) if "RSI" in df.columns and not pd.isna(df.loc[pd.to_datetime(sd), "RSI"]) else None
+                    except Exception:
+                        sell_rsi = None
                     sell_price = sp
                     sell_reason = reason
 
@@ -391,6 +395,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 "Buy Price": None,
                 "Recent Price": None,
                 "Recent RSI": None,
+                "Buy RSI": None,
                 "Buy Signal": False,
                 "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                 "Breakout": False,
@@ -480,9 +485,6 @@ from streamlit_autorefresh import st_autorefresh
 
 auto_refresh_counter = st_autorefresh(interval=refresh_minutes * 60 * 1000, key="auto_refresh")
 
-# Auto refresh every 5 minutes (300000 ms)
-# auto_refresh_counter = st.experimental_autorefresh(interval=300000, key="auto_refresh")
-
 # Run processing when requested OR auto refresh triggered
 if debug_force or run_btn_manual or auto_refresh_counter > 0:
     res = process_all_tickers(
@@ -497,7 +499,8 @@ if debug_force or run_btn_manual or auto_refresh_counter > 0:
         stop_loss_pct=stop_loss_pct,
         run_backtest_flag=False,
         view_mode=view_mode,
-        recent_price_override=None
+        recent_price_override=None,
+        recent_rsi_override=None
     )
     persisted = load_persisted_state()
     persisted.update({
@@ -566,7 +569,7 @@ else:
     for c in rule_cols:
         display_copy[c] = display_copy[c].apply(lambda v: "✓" if bool(v) else "")
 
-    # Ensure numeric formatting
+    # Ensure numeric formatting for core numeric columns
     for col in ["Buy Price", "Recent Price", "Sell Price", "Close"]:
         if col in display_copy.columns:
             display_copy[col] = pd.to_numeric(display_copy[col], errors="coerce")
@@ -583,10 +586,10 @@ else:
         except Exception:
             pass
 
-    # Reorder columns for nicer layout
+    # Reorder columns for nicer layout (include Recent RSI)
     cols_order = [
         "Symbol", "Buy Date", "Buy Price", "Buy RSI",
-        "Recent Price", "Sell Date", "Sell Price", "Sell RSI", "Sell Reason",
+        "Recent Price", "Recent RSI", "Sell Date", "Sell Price", "Sell RSI", "Sell Reason",
         "MatchesFilters", "Buy Signal", "C1", "C2", "C3", "C4", "C5", "Breakout", "DownloadStatus"
     ]
 
@@ -629,7 +632,7 @@ else:
             return [""] * len(row)
         styler = styler.apply(_row_highlight, axis=1)
 
-    # Numeric formatting for price columns
+    # Numeric formatting for price and RSI columns (including Recent RSI)
     fmt = {}
     for c in ["Buy Price", "Recent Price", "Sell Price", "Buy RSI", "Sell RSI", "Recent RSI"]:
         if c in display_copy.columns:
@@ -654,86 +657,57 @@ diag = st.session_state.get("diagnostics", {})
 st.sidebar.write("Diagnostics:", diag)
 st.sidebar.write("yfinance version:", yf.__version__)
 
-# --- RSI Chart Section ---
-if not display_df.empty and "Symbol" in display_df.columns:
-    selected_symbol = st.selectbox(
-    "Select ticker to view RSI chart",
-    display_df["Symbol"].unique(),
-    key="rsi_symbol_select"
-)
-
-    if selected_symbol:
-        # Recompute indicators for the selected ticker to ensure RSI is present
-        df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
-        df_selected = compute_indicators(df_selected)
-
-        if "RSI" in df_selected.columns:
-            st.subheader(f"RSI Trend for {selected_symbol}")
-            st.line_chart(df_selected[["RSI"]])
-
+# --- Single RSI Chart Section (no duplicate widgets) ---
 import matplotlib.pyplot as plt
 
-# --- RSI Chart Section ---
 if not display_df.empty and "Symbol" in display_df.columns:
-    selected_symbol = st.selectbox("Select ticker to view RSI chart", display_df["Symbol"].unique())
+    selected_symbol = st.selectbox(
+        "Select ticker to view RSI chart",
+        display_df["Symbol"].unique(),
+        key="rsi_symbol_chart"
+    )
 
     if selected_symbol:
-        # Fetch and compute indicators for the selected ticker
         df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
         df_selected = compute_indicators(df_selected)
 
-        import matplotlib.pyplot as plt
-        import pandas as pd
-        
-        # Single RSI chart widget (unique key)
-        if not display_df.empty and "Symbol" in display_df.columns:
-            selected_symbol = st.selectbox(
-                "Select ticker to view RSI chart",
-                display_df["Symbol"].unique(),
-                key="rsi_symbol_chart"
-            )
-        
-            if selected_symbol:
-                df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
-                df_selected = compute_indicators(df_selected)
-        
-                if df_selected is None or df_selected.empty:
-                    st.warning(f"No price data available for {selected_symbol}")
-                elif "RSI" not in df_selected.columns:
-                    st.warning(f"RSI not computed for {selected_symbol}")
-                else:
-                    st.subheader(f"RSI Trend for {selected_symbol}")
-        
-                    fig, ax1 = plt.subplots(figsize=(10,5))
-                    ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
-                    ax1.set_ylabel("Price", color="blue")
-                    ax1.tick_params(axis="y", labelcolor="blue")
-        
-                    ax2 = ax1.twinx()
-                    ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
-                    ax2.axhline(70, color="gray", linestyle="--")
-                    ax2.axhline(30, color="gray", linestyle="--")
-                    ax2.set_ylabel("RSI", color="red")
-                    ax2.tick_params(axis="y", labelcolor="red")
-        
-                    # Safe Buy/Sell markers from display_df
-                    row = display_df.loc[display_df["Symbol"] == selected_symbol]
-                    if not row.empty:
-                        buy_date = row.iloc[0].get("Buy Date")
-                        sell_date = row.iloc[0].get("Sell Date")
-                    else:
-                        buy_date = None
-                        sell_date = None
-        
-                    buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
-                    sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
-        
-                    if buy_dt is not None and buy_dt in df_selected.index:
-                        ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=120, label="Buy")
-        
-                    if sell_dt is not None and sell_dt in df_selected.index:
-                        ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=120, label="Sell")
-        
-                    fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
-                    fig.tight_layout()
-                    st.pyplot(fig)
+        if df_selected is None or df_selected.empty:
+            st.warning(f"No price data available for {selected_symbol}")
+        elif "RSI" not in df_selected.columns:
+            st.warning(f"RSI not computed for {selected_symbol}")
+        else:
+            st.subheader(f"RSI Trend for {selected_symbol}")
+
+            fig, ax1 = plt.subplots(figsize=(10,5))
+            ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
+            ax1.set_ylabel("Price", color="blue")
+            ax1.tick_params(axis="y", labelcolor="blue")
+
+            ax2 = ax1.twinx()
+            ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
+            ax2.axhline(70, color="gray", linestyle="--")
+            ax2.axhline(30, color="gray", linestyle="--")
+            ax2.set_ylabel("RSI", color="red")
+            ax2.tick_params(axis="y", labelcolor="red")
+
+            # Safe Buy/Sell markers from display_df
+            row = display_df.loc[display_df["Symbol"] == selected_symbol]
+            if not row.empty:
+                buy_date = row.iloc[0].get("Buy Date")
+                sell_date = row.iloc[0].get("Sell Date")
+            else:
+                buy_date = None
+                sell_date = None
+
+            buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
+            sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
+
+            if buy_dt is not None and buy_dt in df_selected.index:
+                ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=120, label="Buy")
+
+            if sell_dt is not None and sell_dt in df_selected.index:
+                ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=120, label="Sell")
+
+            fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
+            fig.tight_layout()
+            st.pyplot(fig)
