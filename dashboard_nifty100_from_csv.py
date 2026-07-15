@@ -319,20 +319,24 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 buy_price = float(buy_row.get("Close", np.nan)) if not pd.isna(buy_row.get("Close", np.nan)) else None
 
             # Recent price (latest Close or override)
+            # Recent price (latest Close or override)
             if recent_price_override is not None:
                 recent_price = float(recent_price_override) if pd.notna(recent_price_override) else None
                 recent_rsi = float(recent_rsi_override) if pd.notna(recent_rsi_override) else None
             else:
-                if not df.empty:
+                if df is not None and not df.empty:
                     latest_row = df.iloc[-1]
                     recent_price = float(latest_row["Close"]) if "Close" in latest_row and not pd.isna(latest_row["Close"]) else None
                     recent_rsi = float(latest_row["RSI"]) if "RSI" in latest_row and not pd.isna(latest_row["RSI"]) else None
                 else:
                     recent_price = None
                     recent_rsi = None
-
-            # Compute boolean conditions from the chosen row (buy_ts)
-            chosen_row = buy_row if 'buy_row' in locals() else df.iloc[-1]
+            
+            # Compute boolean conditions from the chosen row (safe guard)
+            if df is not None and not df.empty:
+                chosen_row = buy_row if 'buy_row' in locals() else df.iloc[-1]
+            else:
+                chosen_row = {}
             c1 = bool(chosen_row.get("cond1_sma150_gt_ema220", False))
             c2 = bool(chosen_row.get("cond2_close_gt_sma50", False))
             c3 = bool(chosen_row.get("cond3_sma50_gt_sma150", False))
@@ -681,29 +685,30 @@ if not display_df.empty and "Symbol" in display_df.columns:
         import matplotlib.pyplot as plt
         import pandas as pd
         
-        # --- RSI Chart Section ---
+        # Single RSI chart widget (unique key)
         if not display_df.empty and "Symbol" in display_df.columns:
             selected_symbol = st.selectbox(
                 "Select ticker to view RSI chart",
                 display_df["Symbol"].unique(),
-                key="rsi_symbol_select"
+                key="rsi_symbol_chart"
             )
         
             if selected_symbol:
                 df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
                 df_selected = compute_indicators(df_selected)
         
-                if "RSI" in df_selected.columns:
+                if df_selected is None or df_selected.empty:
+                    st.warning(f"No price data available for {selected_symbol}")
+                elif "RSI" not in df_selected.columns:
+                    st.warning(f"RSI not computed for {selected_symbol}")
+                else:
                     st.subheader(f"RSI Trend for {selected_symbol}")
         
                     fig, ax1 = plt.subplots(figsize=(10,5))
-        
-                    # Price on left axis
                     ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
                     ax1.set_ylabel("Price", color="blue")
                     ax1.tick_params(axis="y", labelcolor="blue")
         
-                    # RSI on right axis
                     ax2 = ax1.twinx()
                     ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
                     ax2.axhline(70, color="gray", linestyle="--")
@@ -711,9 +716,14 @@ if not display_df.empty and "Symbol" in display_df.columns:
                     ax2.set_ylabel("RSI", color="red")
                     ax2.tick_params(axis="y", labelcolor="red")
         
-                    # Buy/Sell markers
-                    buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
-                    sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
+                    # Safe Buy/Sell markers from display_df
+                    row = display_df.loc[display_df["Symbol"] == selected_symbol]
+                    if not row.empty:
+                        buy_date = row.iloc[0].get("Buy Date")
+                        sell_date = row.iloc[0].get("Sell Date")
+                    else:
+                        buy_date = None
+                        sell_date = None
         
                     buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
                     sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
