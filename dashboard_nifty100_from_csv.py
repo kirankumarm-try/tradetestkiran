@@ -221,7 +221,7 @@ def find_sell_after_buy(df, buy_date, entry_price, stop_loss_pct):
 # Processing pipeline (produces Buy Date/Price, Sell Date/Price, Recent Price)
 # -------------------------
 def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_dip, window_52w,
-                        entry_prices_map, stop_loss_pct, run_backtest_flag, view_mode="Historical", recent_price_override=None,buy_rsi = None, sell_rsi = None, recent_rsi = None):
+                        entry_prices_map, stop_loss_pct, run_backtest_flag, view_mode="Historical", recent_price_override=None,buy_rsi = None, sell_rsi = None, recent_rsi_override = None, recent_rsi = None):
     results_rows = []
     diagnostics = {"failed_downloads": [], "too_short": [], "exceptions": []}
 
@@ -325,11 +325,11 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
             else:
                 latest_row = df.iloc[-1]
                 recent_price = float(latest_row.get("Close", np.nan)) if not pd.isna(latest_row.get("Close", np.nan)) else None
-                if recent_price is not None:
-                        try:
-                            recent_rsi = float(dlatest_row.get("RSI", np.nan)) if not pd.isna(latest_row.get("RSI", np.nan)) else None
-                        except Exception:
-                            recent_rsi = None
+            if recent_price is not None:
+                try:
+                recent_rsi = float(latest_row.get("RSI", np.nan)) if not pd.isna(latest_row.get("RSI", np.nan)) else None
+                except Exception:
+                    recent_rsi = None
 
             # Compute boolean conditions from the chosen row (buy_ts)
             chosen_row = buy_row if 'buy_row' in locals() else df.iloc[-1]
