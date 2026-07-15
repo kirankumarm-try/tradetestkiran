@@ -321,6 +321,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
             # Recent price (latest Close or override)
             if recent_price_override is not None:
                 recent_price = float(recent_price_override)
+                recent_rsi = float(recent_rsi_override)
             else:
                 latest_row = df.iloc[-1]
                 recent_price = float(latest_row.get("Close", np.nan)) if not pd.isna(latest_row.get("Close", np.nan)) else None
