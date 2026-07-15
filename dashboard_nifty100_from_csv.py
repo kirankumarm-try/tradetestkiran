@@ -320,16 +320,12 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
 
             # Recent price (latest Close or override)
             if recent_price_override is not None:
-                recent_price = float(recent_price_override)
-                recent_rsi = float(recent_rsi_override)
+                recent_price = float(recent_price_override) if pd.notna(recent_price_override) else None
+                recent_rsi = float(recent_rsi_override) if pd.notna(recent_rsi_override) else None
             else:
                 latest_row = df.iloc[-1]
                 recent_price = float(latest_row.get("Close", np.nan)) if not pd.isna(latest_row.get("Close", np.nan)) else None
-            if recent_price is not None:
-                    try:
-                        recent_rsi = float(latest_row.get("RSI", np.nan)) if not pd.isna(latest_row.get("RSI", np.nan)) else None
-                    except Exception:
-                        recent_rsi = None
+                recent_rsi = float(latest_row.get("RSI", np.nan)) if not pd.isna(latest_row.get("RSI", np.nan)) else None
 
             # Compute boolean conditions from the chosen row (buy_ts)
             chosen_row = buy_row if 'buy_row' in locals() else df.iloc[-1]
@@ -366,7 +362,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 "Buy Date": buy_date,
                 "Buy Price": buy_price,
                 "Recent Price": recent_price,
-                "Recent_Rsi": recent_rsi,
+                "Recent RSI": recent_rsi,
                 "Buy RSI": buy_rsi,
                 "Buy Signal": buy_signal,
                 "C1": c1, "C2": c2, "C3": c3, "C4": c4, "C5": c5,
@@ -678,41 +674,52 @@ if not display_df.empty and "Symbol" in display_df.columns:
         df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
         df_selected = compute_indicators(df_selected)
 
-        import pandas as pd
         import matplotlib.pyplot as plt
+        import pandas as pd
         
-        if "RSI" in df_selected.columns:
-            fig, ax1 = plt.subplots(figsize=(10,5))
+        # --- RSI Chart Section ---
+        if not display_df.empty and "Symbol" in display_df.columns:
+            selected_symbol = st.selectbox(
+                "Select ticker to view RSI chart",
+                display_df["Symbol"].unique(),
+                key="rsi_symbol_select"
+            )
         
-            # Price on left axis
-            ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
-            ax1.set_ylabel("Price", color="blue")
-            ax1.tick_params(axis="y", labelcolor="blue")
+            if selected_symbol:
+                df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
+                df_selected = compute_indicators(df_selected)
         
-            # RSI on right axis
-            ax2 = ax1.twinx()
-            ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
-            ax2.axhline(70, color="gray", linestyle="--")
-            ax2.axhline(30, color="gray", linestyle="--")
-            ax2.set_ylabel("RSI", color="red")
-            ax2.tick_params(axis="y", labelcolor="red")
+                if "RSI" in df_selected.columns:
+                    st.subheader(f"RSI Trend for {selected_symbol}")
         
-            # --- Add Buy/Sell markers safely ---
-            buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
-            sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
+                    fig, ax1 = plt.subplots(figsize=(10,5))
         
-            buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
-            sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
+                    # Price on left axis
+                    ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
+                    ax1.set_ylabel("Price", color="blue")
+                    ax1.tick_params(axis="y", labelcolor="blue")
         
-            if buy_dt is not None and buy_dt in df_selected.index:
-                ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=100, label="Buy")
+                    # RSI on right axis
+                    ax2 = ax1.twinx()
+                    ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
+                    ax2.axhline(70, color="gray", linestyle="--")
+                    ax2.axhline(30, color="gray", linestyle="--")
+                    ax2.set_ylabel("RSI", color="red")
+                    ax2.tick_params(axis="y", labelcolor="red")
         
-            if sell_dt is not None and sell_dt in df_selected.index:
-                ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=100, label="Sell")
+                    # Buy/Sell markers
+                    buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
+                    sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
         
-            fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
-            fig.tight_layout()
-            st.pyplot(fig)
-
-            fig.tight_layout()
-            st.pyplot(fig)
+                    buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
+                    sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
+        
+                    if buy_dt is not None and buy_dt in df_selected.index:
+                        ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=120, label="Buy")
+        
+                    if sell_dt is not None and sell_dt in df_selected.index:
+                        ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=120, label="Sell")
+        
+                    fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
+                    fig.tight_layout()
+                    st.pyplot(fig)
