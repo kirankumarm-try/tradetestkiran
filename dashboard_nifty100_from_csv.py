@@ -687,19 +687,23 @@ if not display_df.empty and "Symbol" in display_df.columns:
             ax2.set_ylabel("RSI", color="red")
             ax2.tick_params(axis="y", labelcolor="red")
 
-            # Add Buy/Sell markers from display_df
+            import pandas as pd
+
+            # Example: get buy/sell dates from your results table
             buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
             sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
+            
+            # Convert safely to datetime
+            buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
+            sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
 
             import pandas as pd
-            if buy_date:
-                buy_dt = pd.to_datetime(buy_date)
-                ax2.axvline(buy_dt, color="green", linestyle="--", label="Buy Date")
+            if buy_dt is not None and buy_dt in df_selected.index:
+                ax2.axvline(df_selected.index.get_loc(buy_dt), color="green", linestyle="--", label="Buy Date")
                 ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=100)
-
-            if sell_date:
-                sell_dt = pd.to_datetime(sell_date)
-                ax2.axvline(sell_dt, color="red", linestyle="--", label="Sell Date")
+            
+            if sell_dt is not None and sell_dt in df_selected.index:
+                ax2.axvline(df_selected.index.get_loc(sell_dt), color="red", linestyle="--", label="Sell Date")
                 ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=100)
 
             fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
