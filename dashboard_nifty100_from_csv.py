@@ -323,9 +323,13 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 recent_price = float(recent_price_override) if pd.notna(recent_price_override) else None
                 recent_rsi = float(recent_rsi_override) if pd.notna(recent_rsi_override) else None
             else:
-                latest_row = df.iloc[-1]
-                recent_price = float(latest_row.get("Close", np.nan)) if not pd.isna(latest_row.get("Close", np.nan)) else None
-                recent_rsi = float(latest_row.get("RSI", np.nan)) if not pd.isna(latest_row.get("RSI", np.nan)) else None
+                if not df.empty:
+                    latest_row = df.iloc[-1]
+                    recent_price = float(latest_row["Close"]) if "Close" in latest_row and not pd.isna(latest_row["Close"]) else None
+                    recent_rsi = float(latest_row["RSI"]) if "RSI" in latest_row and not pd.isna(latest_row["RSI"]) else None
+                else:
+                    recent_price = None
+                    recent_rsi = None
 
             # Compute boolean conditions from the chosen row (buy_ts)
             chosen_row = buy_row if 'buy_row' in locals() else df.iloc[-1]
