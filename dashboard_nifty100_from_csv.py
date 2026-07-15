@@ -642,7 +642,11 @@ st.sidebar.write("yfinance version:", yf.__version__)
 
 # --- RSI Chart Section ---
 if not display_df.empty and "Symbol" in display_df.columns:
-    selected_symbol = st.selectbox("Select ticker to view RSI chart", display_df["Symbol"].unique())
+    selected_symbol = st.selectbox(
+    "Select ticker to view RSI chart",
+    display_df["Symbol"].unique(),
+    key="rsi_symbol_select"
+)
 
     if selected_symbol:
         # Recompute indicators for the selected ticker to ensure RSI is present
