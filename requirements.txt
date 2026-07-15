@@ -3,3 +3,4 @@ streamlit-autorefresh>=1.0.1
 yfinance>=0.2.32
 pandas>=1.5.0
 numpy>=1.23.0
+matplotlib==3.9.2
