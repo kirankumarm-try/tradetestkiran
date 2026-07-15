@@ -668,17 +668,17 @@ if not display_df.empty and "Symbol" in display_df.columns:
         df_selected = fetch_ticker(selected_symbol, period="2y", interval="1d")
         df_selected = compute_indicators(df_selected)
 
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        
         if "RSI" in df_selected.columns:
-            st.subheader(f"RSI Trend for {selected_symbol}")
-
-            import matplotlib.pyplot as plt
             fig, ax1 = plt.subplots(figsize=(10,5))
-
+        
             # Price on left axis
             ax1.plot(df_selected.index, df_selected["Close"], color="blue", label="Close Price")
             ax1.set_ylabel("Price", color="blue")
             ax1.tick_params(axis="y", labelcolor="blue")
-
+        
             # RSI on right axis
             ax2 = ax1.twinx()
             ax2.plot(df_selected.index, df_selected["RSI"], color="red", label="RSI")
@@ -686,26 +686,23 @@ if not display_df.empty and "Symbol" in display_df.columns:
             ax2.axhline(30, color="gray", linestyle="--")
             ax2.set_ylabel("RSI", color="red")
             ax2.tick_params(axis="y", labelcolor="red")
-
-            import pandas as pd
-
-            # Example: get buy/sell dates from your results table
+        
+            # --- Add Buy/Sell markers safely ---
             buy_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Buy Date"].values[0]
             sell_date = display_df.loc[display_df["Symbol"] == selected_symbol, "Sell Date"].values[0]
-            
-            # Convert safely to datetime
+        
             buy_dt = pd.to_datetime(buy_date) if pd.notna(buy_date) else None
             sell_dt = pd.to_datetime(sell_date) if pd.notna(sell_date) else None
-
-            import pandas as pd
+        
             if buy_dt is not None and buy_dt in df_selected.index:
-                ax2.axvline(df_selected.index.get_loc(buy_dt), color="green", linestyle="--", label="Buy Date")
-                ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=100)
-            
+                ax2.scatter(buy_dt, df_selected.loc[buy_dt, "RSI"], color="green", marker="^", s=100, label="Buy")
+        
             if sell_dt is not None and sell_dt in df_selected.index:
-                ax2.axvline(df_selected.index.get_loc(sell_dt), color="red", linestyle="--", label="Sell Date")
-                ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=100)
-
+                ax2.scatter(sell_dt, df_selected.loc[sell_dt, "RSI"], color="red", marker="v", s=100, label="Sell")
+        
             fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
+            fig.tight_layout()
+            st.pyplot(fig)
+
             fig.tight_layout()
             st.pyplot(fig)
