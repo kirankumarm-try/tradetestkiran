@@ -239,7 +239,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     "buy_rsi" : None,
                     "Buy Price": None,
                     "Recent Price": None,
-                    "Recent_Rsi": None,
+                    "Recent RSI": None,
                     "Buy Signal": False,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                     "Breakout": False,
@@ -260,7 +260,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     "buy_rsi" : None,
                     "Buy Price": None,
                     "Recent Price": None,
-                    "Recent_Rsi": None,
+                    "Recent RSI": None,
                     "Buy Signal": False,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                     "Breakout": False,
@@ -382,7 +382,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 "Buy Date": None,
                 "Buy Price": None,
                 "Recent Price": None,
-                "Recent_Rsi": None,
+                "Recent RSI": None,
                 "Buy Signal": False,
                 "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                 "Breakout": False,
@@ -623,7 +623,7 @@ else:
 
     # Numeric formatting for price columns
     fmt = {}
-    for c in ["Buy Price", "Recent Price", "Sell Price", "Buy RSI", "Sell RSI"]:
+    for c in ["Buy Price", "Recent Price", "Sell Price", "Buy RSI", "Sell RSI", "Recent RSI"]:
         if c in display_copy.columns:
             display_copy[c] = pd.to_numeric(display_copy[c], errors="coerce")
             fmt[c] = "{:,.2f}"
