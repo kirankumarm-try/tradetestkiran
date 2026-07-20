@@ -1,13 +1,15 @@
-# dashboard_nifty100_buy_sell.py
+# dashboard_nifty100_buy_sell_styled_sidebar_diag.py
 import os
 import json
 from datetime import datetime, timedelta
+from html import escape
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
+import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide", page_title="NIFTY100 Buy/Sell Dashboard")
 
@@ -248,7 +250,7 @@ def find_sell_after_buy(df, buy_date, entry_price, stop_loss_pct):
     return None, None, None
 
 # -------------------------
-# Processing pipeline (produces Buy Date/Price, Sell Date/Price, Recent Price, R_RSI)
+# Processing pipeline (produces Buy Date/Price, Sell Date/Price, Recent Price, R_RSI, Prev_RSI)
 # -------------------------
 def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_dip, window_52w,
                         entry_prices_map, stop_loss_pct, run_backtest_flag, view_mode="Historical", recent_price_override=None, recent_rsi_override=None):
@@ -264,6 +266,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
         buy_rsi = None
         sell_rsi = None
         r_rsi = None
+        prev_rsi = None
         buy_price = None
         sell_price = None
         buy_date_str = None
@@ -279,6 +282,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     "Buy Price": None,
                     "Recent Price": None,
                     "R_RSI": None,
+                    "Prev_RSI": None,
                     "Buy RSI": None,
                     "Buy Signal": False,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
@@ -300,6 +304,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     "Buy Price": None,
                     "Recent Price": None,
                     "R_RSI": None,
+                    "Prev_RSI": None,
                     "Buy RSI": None,
                     "Buy Signal": False,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
@@ -364,9 +369,17 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                         r_rsi = float(df["RSI"].ffill().bfill().iloc[-1]) if "RSI" in df.columns else None
                     except Exception:
                         r_rsi = None
+
+                    # Previous RSI (second-to-last available)
+                    try:
+                        prev_rsi = float(df["RSI"].ffill().bfill().iloc[-2]) if "RSI" in df.columns and len(df) > 1 else None
+                    except Exception:
+                        prev_rsi = None
+
                 else:
                     recent_price = None
                     r_rsi = None
+                    prev_rsi = None
 
             # If buy_price is empty, show recent_price in Buy Price (user requested)
             buy_price_display = buy_price if buy_price is not None else recent_price
@@ -413,6 +426,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 "Buy Price": _to_float_safe(buy_price_display),
                 "Recent Price": _to_float_safe(recent_price),
                 "R_RSI": _to_float_safe(r_rsi),
+                "Prev_RSI": _to_float_safe(prev_rsi),
                 "Buy RSI": _to_float_safe(buy_rsi),
                 "Buy Signal": bool(buy_signal),
                 "C1": bool(c1), "C2": bool(c2), "C3": bool(c3), "C4": bool(c4), "C5": bool(c5),
@@ -433,6 +447,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                 "Buy Price": None,
                 "Recent Price": None,
                 "R_RSI": None,
+                "Prev_RSI": None,
                 "Buy RSI": None,
                 "Buy Signal": False,
                 "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
@@ -456,12 +471,7 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
 # Retry helper for failed tickers
 # -------------------------
 def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, ema_slow, lookback_dip, window_52w, stop_loss_pct, entry_prices_map, view_mode):
-    """
-    Re-fetch only the tickers in tickers_to_retry, compute indicators and update session_rows in-place.
-    Returns updated session_rows and a diagnostics dict.
-    """
     diagnostics = {"retried": [], "still_failed": []}
-    # Build a map from symbol -> row index
     idx_map = {r["Symbol"]: i for i, r in enumerate(session_rows)}
     for t in tickers_to_retry:
         try:
@@ -470,9 +480,9 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
                 diagnostics["still_failed"].append(t)
                 continue
             df = compute_indicators(df, sma_fast, sma_med, ema_slow, lookback_dip, window_52w)
-            # recent price and RSI
             recent_price = None
             r_rsi = None
+            prev_rsi = None
             try:
                 recent_price = float(df["Close"].ffill().bfill().iloc[-1])
             except Exception:
@@ -481,7 +491,11 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
                 r_rsi = float(df["RSI"].ffill().bfill().iloc[-1]) if "RSI" in df.columns else None
             except Exception:
                 r_rsi = None
-            # determine buy date/price similar to main pipeline
+            try:
+                prev_rsi = float(df["RSI"].ffill().bfill().iloc[-2]) if "RSI" in df.columns and len(df) > 1 else None
+            except Exception:
+                prev_rsi = None
+
             buy_price = None
             buy_date_str = None
             buy_rsi = None
@@ -515,7 +529,6 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
                 buy_rsi = get_rsi_at_or_after(df, buy_ts)
                 buy_price = float(buy_row.get("Close", np.nan)) if not pd.isna(buy_row.get("Close", np.nan)) else None
 
-            # sell detection
             sell_date_str = None
             sell_price = None
             sell_rsi = None
@@ -527,15 +540,15 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
                     sell_price = sp
                     sell_rsi = get_rsi_at_or_after(df, pd.to_datetime(sd))
 
-            # update session_rows
             if t in idx_map:
                 i = idx_map[t]
                 session_rows[i].update({
                     "Buy Date": buy_date_str,
                     "Buy Price": float(buy_price) if buy_price is not None else (float(recent_price) if recent_price is not None else None),
+                    "Buy RSI": float(buy_rsi) if buy_rsi is not None else None,
                     "Recent Price": float(recent_price) if recent_price is not None else None,
                     "R_RSI": float(r_rsi) if r_rsi is not None else None,
-                    "Buy RSI": float(buy_rsi) if buy_rsi is not None else None,
+                    "Prev_RSI": float(prev_rsi) if prev_rsi is not None else None,
                     "DownloadStatus": "ok",
                     "Sell Date": sell_date_str,
                     "Sell Price": float(sell_price) if sell_price is not None else None,
@@ -543,23 +556,23 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
                     "Sell Reason": reason if sd is not None else None
                 })
             else:
-                # append new row if not present
                 session_rows.append({
                     "Symbol": t,
                     "Buy Date": buy_date_str,
                     "Buy Price": float(buy_price) if buy_price is not None else (float(recent_price) if recent_price is not None else None),
-                    "Recent Price": float(recent_price) if recent_price is not None else None,
-                    "R_RSI": float(r_rsi) if r_rsi is not None else None,
                     "Buy RSI": float(buy_rsi) if buy_rsi is not None else None,
                     "Buy Signal": False,
+                    "Recent Price": float(recent_price) if recent_price is not None else None,
+                    "R_RSI": float(r_rsi) if r_rsi is not None else None,
+                    "Prev_RSI": float(prev_rsi) if prev_rsi is not None else None,
+                    "Sell Date": sell_date_str,
+                    "Sell Price": float(sell_price) if sell_price is not None else None,
+                    "Sell RSI": float(sell_rsi) if sell_rsi is not None else None,
+                    "Sell Reason": reason if sd is not None else None,
                     "C1": False, "C2": False, "C3": False, "C4": False, "C5": False,
                     "Breakout": False,
                     "MatchesFilters": False,
                     "DownloadStatus": "ok",
-                    "Sell Date": sell_date_str,
-                    "Sell Price": float(sell_price) if sell_price is not None else None,
-                    "Sell RSI": float(sell_rsi) if sell_rsi is not None else None,
-                    "Sell Reason": reason if sd is not None else None
                 })
             diagnostics["retried"].append(t)
         except Exception:
@@ -602,7 +615,7 @@ if "results_rows" not in st.session_state:
     st.session_state.diagnostics = persisted_state.get("diagnostics", {"failed_downloads": [], "too_short": [], "exceptions": []})
     st.session_state.last_refresh = persisted_state.get("last_refresh")
 
-# Sidebar inputs
+# Sidebar inputs and diagnostics
 with st.sidebar:
     st.header("Inputs")
     sma_fast = st.number_input("SMA Fast", min_value=5, max_value=200, value=DEFAULT_SMA_FAST, step=1)
@@ -631,6 +644,18 @@ with st.sidebar:
     st.markdown("**Controls**")
     run_btn_manual = st.button("🔄 Run Analysis")
     debug_force = st.checkbox("DEBUG: Force refresh now", value=False)
+
+    # Diagnostics moved to sidebar
+    with st.expander("Diagnostics / Controls", expanded=False):
+        st.write("Last refresh:", st.session_state.get("last_refresh"))
+        st.write("Diagnostics:", st.session_state.get("diagnostics"))
+        if st.button("Retry failed downloads (sidebar)"):
+            failed = st.session_state.get("diagnostics", {}).get("failed_downloads", [])
+            if failed:
+                rows, diag = retry_failed_downloads(st.session_state.get("results_rows", []), failed, sma_fast, sma_med, ema_slow, lookback_dip, window_52w, stop_loss_pct, entry_prices_map, view_mode)
+                st.session_state.results_rows = rows
+                st.session_state.diagnostics = diag
+                st.experimental_rerun()
 
 refresh_minutes = st.sidebar.slider("Auto refresh interval (minutes)", 1, 30, 5)
 from streamlit_autorefresh import st_autorefresh
@@ -664,210 +689,97 @@ if debug_force or run_btn_manual or auto_refresh_counter > 0:
     st.session_state.diagnostics = persisted.get("diagnostics", {})
     st.session_state.last_refresh = persisted.get("last_refresh")
 
+# -------------------------
 # Load display DataFrame from session or persisted
+# -------------------------
 display_rows = st.session_state.get("results_rows", [])
 display_df = pd.DataFrame(display_rows)
 
-# Diagnostics sidebar: show last Close and last RSI per ticker (from session rows)
-with st.sidebar:
-    st.markdown("### Diagnostics")
-    ps = load_persisted_state()
-    st.write("Last refresh:", ps.get("last_refresh"))
-    diag = st.session_state.get("diagnostics", {})
-    st.write("Diagnostics summary:", diag)
+# -------------------------
+# Styling and rendering (complete)
+# -------------------------
 
-    # Build diagnostics table from session rows
-    if display_rows:
-        diag_rows = []
-        for r in display_rows:
-            diag_rows.append({
-                "Symbol": r.get("Symbol"),
-                "Status": r.get("DownloadStatus", "unknown"),
-                "Last Close": r.get("Recent Price"),
-                "Last RSI": r.get("R_RSI")
-            })
-        diag_df = pd.DataFrame(diag_rows)
-        # show tickers with missing recent price or not ok first
-        missing_mask = diag_df["Last Close"].isna() | (diag_df["Status"] != "ok")
-        if missing_mask.any():
-            st.markdown("**Tickers with missing data or failed downloads**")
-            st.dataframe(diag_df[missing_mask].reset_index(drop=True))
-        st.markdown("**All tickers (diagnostics)**")
-        st.dataframe(diag_df.reset_index(drop=True))
-    else:
-        st.write("No persisted results yet.")
+# Ensure R_RSI exists and is numeric
+if 'R_RSI' not in display_df.columns:
+    display_df['R_RSI'] = pd.NA
+display_df['R_RSI'] = pd.to_numeric(display_df['R_RSI'], errors='coerce')
 
-    # Retry button to re-download failed/missing tickers
-    st.markdown("### Retry failed downloads")
-    retry_btn = st.button("Retry failed tickers now")
-    if retry_btn:
-        # determine tickers to retry
-        to_retry = []
-        for r in display_rows:
-            status = r.get("DownloadStatus", "")
-            recent = r.get("Recent Price")
-            if status != "ok" or recent is None:
-                to_retry.append(r.get("Symbol"))
-        if not to_retry:
-            st.info("No failed or missing tickers to retry.")
+# Ensure price columns are numeric (optional formatting)
+display_df['Buy Price'] = pd.to_numeric(display_df.get('Buy Price'), errors='coerce')
+display_df['Recent Price'] = pd.to_numeric(display_df.get('Recent Price'), errors='coerce')
+
+# Normalize Breakout to boolean robustly
+def _to_bool_series(s):
+    if s is None:
+        return pd.Series(False, index=s.index if hasattr(s, "index") else [])
+    if pd.api.types.is_bool_dtype(s):
+        return s.fillna(False)
+    if pd.api.types.is_numeric_dtype(s):
+        return s.fillna(0).astype(bool)
+    lowered = s.astype(str).str.strip().str.lower()
+    truthy = lowered.isin(["true", "1", "yes", "y", "t"])
+    return truthy.fillna(False)
+
+if 'Breakout' not in display_df.columns:
+    display_df['Breakout'] = False
+display_df['Breakout'] = _to_bool_series(display_df['Breakout'])
+
+# Elementwise CSS for RSI column
+def _rsi_css(col):
+    out = pd.Series("", index=col.index, dtype="object")
+    for i, v in col.items():
+        if pd.isna(v):
+            out.at[i] = ""
+            continue
+        try:
+            vv = float(v)
+        except Exception:
+            out.at[i] = ""
+            continue
+        # thresholds: <=30 green (oversold), >=70 red (overbought)
+        if vv >= 70:
+            out.at[i] = "background-color: #d9534f; color: white;"
+        elif vv <= 30:
+            out.at[i] = "background-color: #5cb85c; color: white;"
         else:
-            st.write(f"Retrying {len(to_retry)} tickers...")
-            updated_rows, retry_diag = retry_failed_downloads(
-                session_rows=st.session_state.results_rows,
-                tickers_to_retry=to_retry,
-                sma_fast=sma_fast,
-                sma_med=sma_med,
-                ema_slow=ema_slow,
-                lookback_dip=lookback_dip,
-                window_52w=window_52w,
-                stop_loss_pct=stop_loss_pct,
-                entry_prices_map=entry_prices_map,
-                view_mode=view_mode
-            )
-            # persist updated rows
-            persisted = load_persisted_state()
-            persisted.update({
-                "results_rows": updated_rows,
-                "diagnostics": st.session_state.get("diagnostics", {}),
-                "last_refresh": datetime.now().isoformat()
-            })
-            save_persisted_state(persisted)
-            st.session_state.results_rows = updated_rows
-            st.success(f"Retry complete. Retried: {len(retry_diag.get('retried', []))}. Still failed: {len(retry_diag.get('still_failed', []))}.")
-            if retry_diag.get("still_failed"):
-                st.write("Still failed:", retry_diag.get("still_failed"))
+            out.at[i] = ""
+    return out
 
-# Apply UI filters (only if display_df not empty)
-if not display_df.empty:
-    # show_recent filter (applies to Buy Date)
-    if show_recent and "Buy Date" in display_df.columns:
-        try:
-            date_col = pd.to_datetime(display_df["Buy Date"], errors="coerce").dt.date
-            cutoff = datetime.now().date() - timedelta(days=30)
-            display_df = display_df[date_col.notna() & (date_col >= cutoff)]
-        except Exception:
-            pass
+# Build full styles DataFrame (strings) and apply per-row Symbol coloring based on Breakout column value
+def _style_all(df):
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    if 'R_RSI' in df.columns:
+        styles['R_RSI'] = _rsi_css(df['R_RSI'])
+    if 'Symbol' in df.columns and 'Breakout' in df.columns:
+        symbol_css = pd.Series("", index=df.index, dtype="object")
+        mask = _to_bool_series(df['Breakout'])
+        # green background for symbol when breakout is True (based on table value)
+        symbol_css.loc[mask] = "background-color: #28a745; color: white; font-weight: 600;"
+        styles['Symbol'] = symbol_css
+    return styles
 
-    # apply rule filters if requested
-    if show_only_matches:
-        mask = pd.Series(True, index=display_df.index)
-        if use_c1 and "C1" in display_df.columns:
-            mask &= display_df["C1"].astype(bool)
-        if use_c2 and "C2" in display_df.columns:
-            mask &= display_df["C2"].astype(bool)
-        if use_c3 and "C3" in display_df.columns:
-            mask &= display_df["C3"].astype(bool)
-        if use_c4 and "C4" in display_df.columns:
-            mask &= display_df["C4"].astype(bool)
-        if use_c5 and "C5" in display_df.columns:
-            mask &= display_df["C5"].astype(bool)
-        if use_breakout and "Breakout" in display_df.columns:
-            mask &= display_df["Breakout"].astype(bool)
-        display_df = display_df[mask]
+# Apply styles and format numeric columns for display
+styled = display_df.style.apply(_style_all, axis=None)
+styled = styled.format({
+    'Buy Price': '{:,.2f}',
+    'Recent Price': '{:,.2f}',
+    'R_RSI': '{:.1f}',
+    'Prev_RSI': '{:.1f}'
+}, na_rep="")
 
-# --- Render results with ticks and color indicators (compatible) ---
-if display_df is None:
-    display_df = pd.DataFrame([])
+# Render styled DataFrame in Streamlit
+st.dataframe(styled, use_container_width=True)
 
-if display_df.empty:
-    st.warning("No tickers matched the selected filters or no data available.")
-else:
-    display_copy = display_df.copy()
+# Optional legend below the table
+st.markdown(
+    "<div style='display:flex;gap:12px;align-items:center'>"
+    "<div style='background:#5cb85c;color:white;padding:4px 8px;border-radius:4px'>RSI <= 30</div>"
+    "<div style='background:#d9534f;color:white;padding:4px 8px;border-radius:4px'>RSI >= 70</div>"
+    "<div style='background:#28a745;color:white;padding:4px 8px;border-radius:4px'>Symbol: Breakout</div>"
+    "</div>",
+    unsafe_allow_html=True
+)
 
-    # Remove any 'Bought' column if present
-    if "Bought" in display_copy.columns:
-        display_copy = display_copy.drop(columns=["Bought"])
-
-    # Ensure boolean-like columns exist and are booleans
-    bool_cols = ["Buy Signal", "C1", "C2", "C3", "C4", "C5", "Breakout", "MatchesFilters"]
-    for c in bool_cols:
-        if c in display_copy.columns:
-            display_copy[c] = display_copy[c].astype(bool)
-
-    # Convert boolean columns to tick or empty string for display
-    rule_cols = [c for c in bool_cols if c in display_copy.columns]
-    for c in rule_cols:
-        display_copy[c] = display_copy[c].apply(lambda v: "✓" if bool(v) else "")
-
-    # Ensure numeric formatting for core numeric columns
-    for col in ["Buy Price", "Recent Price", "Sell Price", "Close"]:
-        if col in display_copy.columns:
-            display_copy[col] = pd.to_numeric(display_copy[col], errors="coerce")
-
-    # Format Buy Date and Sell Date for display
-    if "Buy Date" in display_copy.columns:
-        try:
-            display_copy["Buy Date"] = pd.to_datetime(display_copy["Buy Date"], errors="coerce").dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
-    if "Sell Date" in display_copy.columns:
-        try:
-            display_copy["Sell Date"] = pd.to_datetime(display_copy["Sell Date"], errors="coerce").dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
-
-    # Reorder columns for nicer layout (include R_RSI)
-    cols_order = [
-        "Symbol", "Buy Date", "Buy Price", "Buy RSI",
-        "Recent Price", "R_RSI", "Sell Date", "Sell Price", "Sell RSI", "Sell Reason",
-        "MatchesFilters", "Buy Signal", "C1", "C2", "C3", "C4", "C5", "Breakout", "DownloadStatus"
-    ]
-
-    cols_present = [c for c in cols_order if c in display_copy.columns]
-    display_copy = display_copy[cols_present]
-
-    # Create Styler
-    styler = display_copy.style
-
-    # Elementwise highlight function (returns DataFrame of CSS strings)
-    def _highlight_ticks(df):
-        styles = pd.DataFrame("", index=df.index, columns=df.columns)
-        for col in rule_cols:
-            if col in df.columns:
-                styles.loc[df[col] == "✓", col] = "background-color: #e6f9e6"
-        return styles
-
-    if rule_cols:
-        styler = styler.apply(_highlight_ticks, axis=None)
-
-    # Color the Symbol cell green and bold when Breakout is ticked
-    def _symbol_color(row):
-        styles = [""] * len(row)
-        try:
-            if "Breakout" in row.index and row["Breakout"] == "✓":
-                if "Symbol" in row.index:
-                    idx = list(row.index).index("Symbol")
-                    styles[idx] = "color: #0b6623; font-weight: 600"
-        except Exception:
-            pass
-        return styles
-
-    styler = styler.apply(_symbol_color, axis=1)
-
-    # Optionally highlight entire row lightly when MatchesFilters is ticked
-    if "MatchesFilters" in display_copy.columns:
-        def _row_highlight(row):
-            if row.get("MatchesFilters") == "✓":
-                return ["background-color: #f0fff0"] * len(row)
-            return [""] * len(row)
-        styler = styler.apply(_row_highlight, axis=1)
-
-    # Numeric formatting for price and RSI columns (including R_RSI)
-    fmt = {}
-    for c in ["Buy Price", "Recent Price", "Sell Price", "Buy RSI", "Sell RSI", "R_RSI"]:
-        if c in display_copy.columns:
-            display_copy[c] = pd.to_numeric(display_copy[c], errors="coerce")
-            fmt[c] = "{:,.2f}"
-    if fmt:
-        styler = styler.format(fmt)
-
-    styler = styler.set_table_styles([
-        {"selector": "th", "props": [("text-align", "left")]},
-        {"selector": "td", "props": [("text-align", "left"), ("padding", "6px 8px")]}
-    ])
-
-    st.subheader(f"Results — {view_mode} mode (showing {len(display_copy)} rows)")
-    st.dataframe(styler)
 
 # -------------------------
 # RSI-only chart (Streamlit line chart)
