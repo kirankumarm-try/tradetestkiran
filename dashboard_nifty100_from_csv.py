@@ -149,15 +149,31 @@ def compute_indicators(df, sma_fast=DEFAULT_SMA_FAST, sma_med=DEFAULT_SMA_MED,
     df['52w_low'] = df['Close'].rolling(window_52w, min_periods=1).min()
 
     # --- Smoothed RSI calculation (EMA smoothing) ---
-    delta = df['Close'].diff()
+    # --- Smoothed RSI calculation (EMA smoothing) ---
+    # Work only on rows with valid Close values to avoid carrying RSI into NaN rows
+    close = df['Close'].copy()
+    valid_mask = close.notna()
+
+    # Prepare a series that has NaN where Close is NaN
+    close_valid = close.where(valid_mask)
+
+    # Compute delta only on the valid series
+    delta = close_valid.diff()
+
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
+    # EMA smoothing for gains/losses; this will produce NaNs at the start until min_periods satisfied
     avg_gain = gain.ewm(alpha=1/rsi_period, min_periods=rsi_period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1/rsi_period, min_periods=rsi_period, adjust=False).mean()
 
     rs = avg_gain / avg_loss
-    df['RSI'] = 100 - (100 / (1 + rs))
+    rsi_series = 100 - (100 / (1 + rs))
+
+    # Assign RSI back to df but ensure rows with invalid Close remain NaN
+    df['RSI'] = rsi_series
+    df.loc[~valid_mask, 'RSI'] = np.nan
+
 
     # recent dip logic
     dipped = df['Low'] < df['ema_220']
@@ -362,14 +378,18 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                     recent_price = None
 
                 # r_rsi and prev_rsi: last two non-NaN RSI values (do NOT use ffill/bfill for RSI)
+                # r_rsi and prev_rsi: last two RSI values from rows that have a valid Close
                 r_rsi = None
                 prev_rsi = None
                 if "RSI" in df.columns:
-                    rsi_non_na = df["RSI"].dropna()
-                    if len(rsi_non_na) >= 1:
-                        r_rsi = float(rsi_non_na.iloc[-1])
-                    if len(rsi_non_na) >= 2:
-                        prev_rsi = float(rsi_non_na.iloc[-2])
+                    # consider only rows where Close is valid (not NaN) and RSI is not NaN
+                    mask = df['Close'].notna() & df['RSI'].notna()
+                    rsi_valid = df.loc[mask, 'RSI']
+                    if len(rsi_valid) >= 1:
+                        r_rsi = float(rsi_valid.iloc[-1])
+                    if len(rsi_valid) >= 2:
+                        prev_rsi = float(rsi_valid.iloc[-2])
+
 
             # If buy_price is empty, show recent_price in Buy Price
             buy_price_display = buy_price if buy_price is not None else recent_price
@@ -404,9 +424,10 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
 
             # Optional debug output (controlled by sidebar checkbox)
             if debug_show_rsi:
+                st.write(f"DEBUG df tail for {ticker}")
+                st.write(df.tail(8)[['Close','RSI']])
                 st.write(f"DEBUG RSI {ticker}: last={r_rsi} prev={prev_rsi}")
-                # show df tail for deeper inspection
-                st.write(df.tail(6)[['Close','RSI']])
+
 
             # Convert numeric numpy types to native Python floats for JSON serialization
             def _to_float_safe(x):
@@ -484,12 +505,17 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
             except Exception:
                 recent_price = None
 
+            # r_rsi and prev_rsi: last two RSI values from rows that have a valid Close
+            r_rsi = None
+            prev_rsi = None
             if "RSI" in df.columns:
-                rsi_non_na = df["RSI"].dropna()
-                if len(rsi_non_na) >= 1:
-                    r_rsi = float(rsi_non_na.iloc[-1])
-                if len(rsi_non_na) >= 2:
-                    prev_rsi = float(rsi_non_na.iloc[-2])
+                # consider only rows where Close is valid (not NaN) and RSI is not NaN
+                mask = df['Close'].notna() & df['RSI'].notna()
+                rsi_valid = df.loc[mask, 'RSI']
+                if len(rsi_valid) >= 1:
+                    r_rsi = float(rsi_valid.iloc[-1])
+                if len(rsi_valid) >= 2:
+                    prev_rsi = float(rsi_valid.iloc[-2])
 
             buy_price = None
             buy_date_str = None
