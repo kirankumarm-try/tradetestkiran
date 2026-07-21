@@ -657,12 +657,38 @@ with st.sidebar:
                 st.session_state.diagnostics = diag
                 st.experimental_rerun()
 
-refresh_minutes = st.sidebar.slider("Auto refresh interval (minutes)", 1, 30, 5)
-from streamlit_autorefresh import st_autorefresh
-auto_refresh_counter = st_autorefresh(interval=refresh_minutes * 60 * 1000, key="auto_refresh")
+#refresh_minutes = st.sidebar.slider("Auto refresh interval (minutes)", 1, 30, 5)
+#from streamlit_autorefresh import st_autorefresh
+#auto_refresh_counter = st_autorefresh(interval=refresh_minutes * 60 * 1000, key="auto_refresh")
 
-# Run processing when requested OR auto refresh triggered
-if debug_force or run_btn_manual or auto_refresh_counter > 0:
+# --- Replace streamlit_autorefresh with built-in timer + manual refresh ---
+
+# Sidebar control already created earlier:
+refresh_minutes: int = st.sidebar.slider("Auto refresh interval (minutes)", 1, 30, 5)
+
+# Manual refresh button (keeps the old behavior)
+manual_refresh = st.sidebar.button("🔄 Refresh now")
+
+# Initialize a timestamp in session state to track last auto refresh
+if "last_auto_refresh_ts" not in st.session_state:
+    st.session_state.last_auto_refresh_ts = datetime.now().timestamp()
+
+# Compute whether auto-refresh interval has elapsed
+now_ts = datetime.now().timestamp()
+elapsed_seconds = now_ts - st.session_state.last_auto_refresh_ts
+auto_interval_seconds = int(refresh_minutes) * 60
+
+# If interval elapsed, mark for auto refresh and update timestamp
+auto_refresh_triggered = False
+if elapsed_seconds >= auto_interval_seconds:
+    auto_refresh_triggered = True
+    st.session_state.last_auto_refresh_ts = now_ts
+
+# Decide whether to run processing this run
+should_run = debug_force or run_btn_manual or manual_refresh or auto_refresh_triggered
+
+# Use should_run in place of the old condition
+if should_run:
     res = process_all_tickers(
         tickers=tickers,
         period=period,
@@ -704,72 +730,68 @@ if 'R_RSI' not in display_df.columns:
     display_df['R_RSI'] = pd.NA
 display_df['R_RSI'] = pd.to_numeric(display_df['R_RSI'], errors='coerce')
 
-# Ensure price columns are numeric (optional formatting)
+# Ensure numeric conversions
+display_df['R_RSI'] = pd.to_numeric(display_df.get('R_RSI'), errors='coerce')
+display_df['Prev_RSI'] = pd.to_numeric(display_df.get('Prev_RSI'), errors='coerce')
 display_df['Buy Price'] = pd.to_numeric(display_df.get('Buy Price'), errors='coerce')
 display_df['Recent Price'] = pd.to_numeric(display_df.get('Recent Price'), errors='coerce')
 
 # Normalize Breakout to boolean robustly
-def _to_bool_series(s):
-    if s is None:
-        return pd.Series(False, index=s.index if hasattr(s, "index") else [])
-    if pd.api.types.is_bool_dtype(s):
-        return s.fillna(False)
-    if pd.api.types.is_numeric_dtype(s):
-        return s.fillna(0).astype(bool)
-    lowered = s.astype(str).str.strip().str.lower()
-    truthy = lowered.isin(["true", "1", "yes", "y", "t"])
-    return truthy.fillna(False)
+#def _to_bool_series(s):
+ #   if s is None:
+  #      return pd.Series(False, index=s.index if hasattr(s, "index") else [])
+   # if pd.api.types.is_bool_dtype(s):
+    #    return s.fillna(False)
+#    if pd.api.types.is_numeric_dtype(s):
+ #       return s.fillna(0).astype(bool)
+  #  lowered = s.astype(str).str.strip().str.lower()
+   # truthy = lowered.isin(["true", "1", "yes", "y", "t"])
+    #return truthy.fillna(False)
 
-if 'Breakout' not in display_df.columns:
-    display_df['Breakout'] = False
-display_df['Breakout'] = _to_bool_series(display_df['Breakout'])
+#if 'Breakout' not in display_df.columns:
+#    display_df['Breakout'] = False
+#display_df['Breakout'] = _to_bool_series(display_df['Breakout'])
 
-# Elementwise CSS for RSI column
-def _rsi_css(col):
-    out = pd.Series("", index=col.index, dtype="object")
-    for i, v in col.items():
-        if pd.isna(v):
-            out.at[i] = ""
-            continue
-        try:
-            vv = float(v)
-        except Exception:
-            out.at[i] = ""
-            continue
-        # thresholds: <=30 green (oversold), >=70 red (overbought)
-        if vv > Prev_RSI:
-            out.at[i] = "background-color: #d9534f; color: white;"
-        elif vv <= Prev_RSI :
-            out.at[i] = "background-color: #5cb85c; color: white;"
-        else:
-            out.at[i] = ""
-    return out
-
-# Build full styles DataFrame (strings) and apply per-row Symbol coloring based on Breakout column value
+# Elementwise CSS for RSI column based on comparison with Prev_RSI
+# Unified styling function
 def _style_all(df):
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
-    if 'R_RSI' in df.columns:
-        styles['R_RSI'] = _rsi_css(df['R_RSI'])
-    
+
+    # RSI vs Prev_RSI
+    if 'R_RSI' in df.columns and 'Prev_RSI' in df.columns:
+        css_series = pd.Series("", index=df.index, dtype="object")
+        for i in df.index:
+            curr, prev = df.at[i, 'R_RSI'], df.at[i, 'Prev_RSI']
+            if pd.notna(curr) and pd.notna(prev):
+                if curr > prev:
+                    css_series.at[i] = "background-color: #5cb85c; color: white;"
+                elif curr < prev:
+                    css_series.at[i] = "background-color: #d9534f; color: white;"
+        styles['R_RSI'] = css_series
+
+    # Symbol breakout coloring
     if 'Symbol' in df.columns and 'Breakout' in df.columns:
         symbol_css = pd.Series("", index=df.index, dtype="object")
-        mask = _to_bool_series(df['Breakout'])
-        # green background for symbol when breakout is True (based on table value)
+        mask = df['Breakout'].astype(bool)
         symbol_css.loc[mask] = "background-color: #28a745; color: white; font-weight: 600;"
         styles['Symbol'] = symbol_css
+
     return styles
 
-# Apply styles and format numeric columns for display
-styled = display_df.style.apply(_style_all, axis=None)
-styled = styled.format({
+# Apply styles and format
+styled = display_df.style.apply(_style_all, axis=None).format({
     'Buy Price': '{:,.2f}',
     'Recent Price': '{:,.2f}',
     'R_RSI': '{:.1f}',
     'Prev_RSI': '{:.1f}'
 }, na_rep="")
 
-# Render styled DataFrame in Streamlit
-st.dataframe(styled, use_container_width=True)
+# Always render styled DataFrame
+st.dataframe(styled, width = "stretch")
+
+# Optional: show timestamp so you know styling ran
+st.write("Styling applied at:", datetime.now().strftime("%H:%M:%S"))
+
 
 # Optional legend below the table
 st.markdown(
@@ -780,6 +802,9 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True
 )
+
+styled = display_df.style.apply(_style_all, axis=None)
+st.dataframe(styled, width="stretch")
 
 
 # -------------------------
@@ -802,7 +827,7 @@ if not display_df.empty and "Symbol" in display_df.columns:
             st.warning(f"RSI not computed for {selected_symbol_rsi}")
         else:
             st.subheader(f"RSI (line) for {selected_symbol_rsi}")
-            st.line_chart(df_selected["RSI"], use_container_width=True)
+            st.line_chart(df_selected["RSI"], width="stretch")
 
 # -------------------------
 # Price + RSI chart (matplotlib)
