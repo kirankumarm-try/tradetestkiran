@@ -737,9 +737,9 @@ def _rsi_css(col):
             out.at[i] = ""
             continue
         # thresholds: <=30 green (oversold), >=70 red (overbought)
-        if vv >= 70:
+        if vv > Prev_RSI:
             out.at[i] = "background-color: #d9534f; color: white;"
-        elif vv <= 30:
+        elif vv <= Prev_RSI :
             out.at[i] = "background-color: #5cb85c; color: white;"
         else:
             out.at[i] = ""
@@ -750,6 +750,7 @@ def _style_all(df):
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
     if 'R_RSI' in df.columns:
         styles['R_RSI'] = _rsi_css(df['R_RSI'])
+    
     if 'Symbol' in df.columns and 'Breakout' in df.columns:
         symbol_css = pd.Series("", index=df.index, dtype="object")
         mask = _to_bool_series(df['Breakout'])
