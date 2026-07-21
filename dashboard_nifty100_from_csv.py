@@ -367,13 +367,15 @@ def process_all_tickers(tickers, period, sma_fast, sma_med, ema_slow, lookback_d
                         recent_price = None
                     # r_rsi: last non-NaN RSI
                     try:
-                        r_rsi = float(df["RSI"].ffill().bfill().iloc[-1]) if "RSI" in df.columns else None
+                        # Current RSI (last available)
+                        r_rsi = float(df['RSI'].iloc[-1]) if len(df) > 0 else None
                     except Exception:
                         r_rsi = None
 
                     # Previous RSI (second-to-last available)
                     try:
-                        prev_rsi = float(df["RSI"].ffill().bfill().iloc[-2]) if "RSI" in df.columns and len(df) > 1 else None
+                        # Previous RSI (second-to-last available)
+                        prev_rsi = float(df['RSI'].iloc[-2]) if len(df) > 1 else None
                     except Exception:
                         prev_rsi = None
 
@@ -489,11 +491,15 @@ def retry_failed_downloads(session_rows, tickers_to_retry, sma_fast, sma_med, em
             except Exception:
                 recent_price = None
             try:
-                r_rsi = float(df["RSI"].ffill().bfill().iloc[-1]) if "RSI" in df.columns else None
+               # Current RSI (last available)
+                r_rsi = float(df['RSI'].iloc[-1]) if len(df) > 0 else None
             except Exception:
                 r_rsi = None
+
+            # Previous RSI (second-to-last available)
             try:
-                prev_rsi = float(df["RSI"].ffill().bfill().iloc[-2]) if "RSI" in df.columns and len(df) > 1 else None
+                # Previous RSI (second-to-last available)
+                prev_rsi = float(df['RSI'].iloc[-2]) if len(df) > 1 else None
             except Exception:
                 prev_rsi = None
 
