@@ -624,6 +624,19 @@ def parse_entry_prices(text):
                 continue
     return mapping
 
+# Top controls moved from sidebar to above header
+with st.container():
+    col1, col2, col3, col4 = st.columns([1,1,1,1])
+    run_btn_manual = col1.button("🔄 Run Analysis")
+    manual_refresh = col2.button("🔄 Refresh now")
+    debug_force = col3.checkbox("DEBUG: Force refresh now", value=False)
+    debug_show_rsi = col4.checkbox("DEBUG: show RSI values", value=False)
+    # optional status placeholder
+    status_col = st.container()
+    if 'last_refresh' in st.session_state and st.session_state.last_refresh:
+        status_col.write(f"Last refresh: {st.session_state.last_refresh}")
+
+
 # -------------------------
 # Streamlit UI
 # -------------------------
