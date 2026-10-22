@@ -204,7 +204,94 @@ def compute_indicators(df, sma_fast=DEFAULT_SMA_FAST, sma_med=DEFAULT_SMA_MED,
     df['buy_signal'] = (df['trend_eligible'] & df['breakout']).astype(bool)
 
     return df
+# -------------------------
+# Supertrend helper (ATR based)
+# -------------------------
+def compute_supertrend(df, atr_period=10, multiplier=3.0):
+    """
+    Adds columns 'ATR', 'Supertrend', 'ST_dir' to a copy of df and returns it.
+    atr_period: ATR smoothing period (Wilder style)
+    multiplier: ATR multiplier for bands
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy().sort_index()
+    if len(df) < atr_period + 2:
+        return df
 
+    required_cols = {'High', 'Low', 'Close'}
+    if not required_cols.issubset(df.columns):
+        return df
+
+    high = pd.to_numeric(df['High'], errors='coerce')
+    low = pd.to_numeric(df['Low'], errors='coerce')
+    close = pd.to_numeric(df['Close'], errors='coerce')
+
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Fill early ATR gaps so the Supertrend series does not stay entirely NaN at the start.
+    atr = tr.ewm(alpha=1/atr_period, min_periods=atr_period, adjust=False).mean()
+    df['ATR'] = atr.ffill().bfill()
+
+    hl2 = (high + low) / 2.0
+    basic_ub = hl2 + multiplier * df['ATR']
+    basic_lb = hl2 - multiplier * df['ATR']
+
+    final_ub = basic_ub.copy()
+    final_lb = basic_lb.copy()
+    for i in range(1, len(df)):
+        if pd.isna(final_ub.iat[i-1]):
+            final_ub.iat[i] = basic_ub.iat[i]
+        elif (basic_ub.iat[i] < final_ub.iat[i-1]) or (close.iat[i-1] > final_ub.iat[i-1]):
+            final_ub.iat[i] = basic_ub.iat[i]
+        else:
+            final_ub.iat[i] = final_ub.iat[i-1]
+
+        if pd.isna(final_lb.iat[i-1]):
+            final_lb.iat[i] = basic_lb.iat[i]
+        elif (basic_lb.iat[i] > final_lb.iat[i-1]) or (close.iat[i-1] < final_lb.iat[i-1]):
+            final_lb.iat[i] = basic_lb.iat[i]
+        else:
+            final_lb.iat[i] = final_lb.iat[i-1]
+
+    supertrend = pd.Series(index=df.index, dtype='float64')
+    st_dir = pd.Series(index=df.index, dtype='object')
+
+    for i in range(len(df)):
+        if i == 0:
+            supertrend.iat[i] = final_ub.iat[i]
+            st_dir.iat[i] = 'Bull' if close.iat[i] >= hl2.iat[i] else 'Bear'
+            continue
+
+        prev_dir = st_dir.iat[i-1]
+        curr_close = close.iat[i]
+        if prev_dir == 'Bear':
+            if curr_close <= final_ub.iat[i]:
+                supertrend.iat[i] = final_ub.iat[i]
+                st_dir.iat[i] = 'Bear'
+            else:
+                supertrend.iat[i] = final_lb.iat[i]
+                st_dir.iat[i] = 'Bull'
+        else:
+            if curr_close >= final_lb.iat[i]:
+                supertrend.iat[i] = final_lb.iat[i]
+                st_dir.iat[i] = 'Bull'
+            else:
+                supertrend.iat[i] = final_ub.iat[i]
+                st_dir.iat[i] = 'Bear'
+
+    df['Supertrend'] = supertrend.ffill().bfill()
+    df['ST_dir'] = st_dir.ffill().bfill()
+
+    df['hlc3'] = (df['High'] + df['Low'] + df['Close']) / 3.0
+    num = (df['hlc3'] * df['Volume']).rolling(window=14, min_periods=1).sum()
+    den = df['Volume'].rolling(window=14, min_periods=1).sum()
+    df['VWAP'] = (num / den).replace([np.inf, -np.inf], np.nan).ffill().bfill()
+    df['ST_over_VWAP'] = (df['Supertrend'] / df['VWAP']).replace([np.inf, -np.inf], np.nan)
+    return df
 # -------------------------
 # Helper to safely get RSI at or after a date/timestamp
 # -------------------------
@@ -750,6 +837,130 @@ if should_run:
 display_rows = st.session_state.get("results_rows", [])
 display_df = pd.DataFrame(display_rows)
 
+# -------------------------
+# Build Supertrend table (Sl. No., Symbol, Today -> 29d_ago)
+# -------------------------
+import yfinance as yf
+
+
+def build_supertrend_table(display_df, days_required=30, fetch_period='60d'):
+    if display_df is None or display_df.empty or 'Symbol' not in display_df.columns:
+        return pd.DataFrame()
+
+    symbols = display_df['Symbol'].dropna().astype(str).unique().tolist()
+    st_map = {}
+    st_dir_map = {}
+    df_map = {}
+
+    for sym in symbols:
+        try:
+            sym_clean = sym.strip()
+            if not sym_clean:
+                st_map[sym] = [None] * days_required
+                continue
+            if not sym_clean.endswith('.NS') and not sym_clean.endswith('.BO') and not '.' in sym_clean:
+                sym_clean = f"{sym_clean}.NS"
+
+            hist = yf.download(sym_clean, period=fetch_period, interval='1d', progress=False, auto_adjust=False, actions=False)
+            if hist is None or hist.empty:
+                st_map[sym] = [None] * days_required
+                continue
+
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist.columns = hist.columns.get_level_values(0)
+            hist.index = pd.to_datetime(hist.index)
+
+            required = {'High', 'Low', 'Close'}
+            if not required.issubset(hist.columns):
+                st_map[sym] = [None] * days_required
+                continue
+
+            st_df = compute_supertrend(hist, atr_period=10, multiplier=3.0)
+            df_map[sym] = st_df
+            supertrend_values = pd.to_numeric(st_df.get('Supertrend', pd.Series(dtype=float)), errors='coerce')
+            valid = supertrend_values.notna()
+            if not valid.any():
+                st_map[sym] = [None] * days_required
+                continue
+
+            vals = supertrend_values.loc[valid].astype(float).tolist()
+            vals = vals[-days_required:] if len(vals) >= days_required else vals
+            vals = vals[::-1]
+            padded = vals + [None] * (days_required - len(vals))
+            st_map[sym] = [round(float(v), 3) if v is not None and not pd.isna(v) else None for v in padded[:days_required]]
+
+            directions = st_df.loc[valid, 'ST_dir'].tolist()
+            directions = directions[-days_required:] if len(directions) >= days_required else directions
+            st_dir_map[sym] = directions[::-1] + [None] * (days_required - len(directions))
+        except Exception:
+            st_map[sym] = [None] * days_required
+
+    rows_out = []
+    for i, sym in enumerate(symbols, start=1):
+        row = {"Symbol": sym}
+        # vals_st is list of supertrend values for days_required
+        vals_st = st_map.get(sym, [None] * days_required)
+        # if you have a df_map that stores the DataFrame per symbol, use it to fetch VWAP
+        df_sym = df_map.get(sym)  # df_map must be prepared earlier when computing supertrend
+        for d in range(days_required):
+            col = f"ST_{d}"
+            st_val = vals_st[d] if d < len(vals_st) else None
+
+            # get VWAP for that day index from df_sym if available
+            vwap_val = None
+            if df_sym is not None and not df_sym.empty:
+                try:
+                    # pick the row d days ago from the end
+                    idx = -1 - d
+                    vwap_val = float(df_sym['VWAP'].iloc[idx])
+                except Exception:
+                    vwap_val = None
+
+            # format combined value as "ST / VWAP"
+            if st_val is None and vwap_val is None:
+                row[col] = None
+            else:
+                st_str = f"{st_val:.2f}" if st_val is not None else "nan"
+                vwap_str = f"{vwap_val:.2f}" if vwap_val is not None else "nan"
+                row[col] = f"{st_str} / {vwap_str}"
+
+        rows_out.append(row)
+
+    st_table_df = pd.DataFrame(rows_out)
+    if st_table_df.empty:
+        return None
+
+    rename_map = {f"ST_{d}": ("Today" if d == 0 else f"{d}d_ago") for d in range(days_required)}
+    st_table_df = st_table_df.rename(columns=rename_map)
+    cols_order = ["Symbol"] + [rename_map[f"ST_{d}"] for d in range(days_required)]
+    st_table_df = st_table_df[cols_order]
+
+    styles = pd.DataFrame("", index=st_table_df.index, columns=st_table_df.columns)
+    for row_idx, sym in enumerate(symbols):
+        for day_idx, direction in enumerate(st_dir_map.get(sym, [])):
+            column = rename_map[f"ST_{day_idx}"]
+            if direction == "Bull":
+                styles.at[row_idx, column] = "background-color: #5cb85c; color: white; font-weight: 600;"
+            elif direction == "Bear":
+                styles.at[row_idx, column] = "background-color: #d9534f; color: white; font-weight: 600;"
+
+    return st_table_df.style.apply(lambda _: styles, axis=None)
+
+
+display_df = locals().get('display_df', None)
+if display_df is None:
+    display_df = pd.DataFrame(locals().get('display_rows', []))
+elif not isinstance(display_df, pd.DataFrame):
+    display_df = pd.DataFrame(display_df)
+
+st_table = build_supertrend_table(display_df, days_required=30, fetch_period='60d')
+if st_table is None:
+    st.info("No symbols available to compute Supertrend.")
+else:
+    st.subheader("Supertrend — last 30 days")
+    st.dataframe(st_table, use_container_width=True)
+
+
 # Ensure numeric conversions
 for col in ['R_RSI','Prev_RSI','Buy Price','Recent Price','Buy RSI','Sell Price','Sell RSI']:
     if col in display_df.columns:
@@ -783,6 +994,33 @@ def _style_all(df):
 
     return styles
 
+@st.cache_data(ttl=900, show_spinner=False)
+def build_momentum_ribbon_data(symbols):
+    ema_spans = (8, 13, 21, 34, 55, 89)
+    rows = []
+
+    for symbol in symbols:
+        ticker = str(symbol).strip()
+        if not ticker.endswith(('.NS', '.BO')) and '.' not in ticker:
+            ticker = f"{ticker}.NS"
+
+        history = fetch_ticker(ticker, period="2y", interval="1d")
+        if history is None or history.empty or 'Close' not in history.columns:
+            continue
+
+        close = pd.to_numeric(history['Close'], errors='coerce').dropna()
+        if close.empty:
+            continue
+
+        row = {'Symbol': symbol, 'Price': float(close.iloc[-1])}
+        for span in ema_spans:
+            ema = close.ewm(span=span, adjust=False).mean()
+            row[f'EMA {span}'] = float(ema.iloc[-1])
+        rows.append(row)
+
+    columns = ['Symbol', 'Price'] + [f'EMA {span}' for span in ema_spans]
+    return pd.DataFrame(rows, columns=columns)
+
 styled = display_df.style.apply(_style_all, axis=None).format({
     'Buy Price': '{:,.2f}',
     'Recent Price': '{:,.2f}',
@@ -804,8 +1042,24 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-styled = display_df.style.apply(_style_all, axis=None)
-st.dataframe(styled, width="stretch")
+momentum_df = build_momentum_ribbon_data(tuple(display_df['Symbol'].dropna().astype(str).unique())) if 'Symbol' in display_df.columns else pd.DataFrame()
+if momentum_df.empty:
+    st.info("No price data available for the momentum ribbon.")
+else:
+    ema_columns = [column for column in momentum_df.columns if column.startswith('EMA ')]
+    ribbon_styles = pd.DataFrame("", index=momentum_df.index, columns=momentum_df.columns)
+    for row_idx, row in momentum_df.iterrows():
+        for column in ema_columns:
+            if pd.notna(row[column]):
+                color = "#198754" if row['Price'] >= row[column] else "#dc3545"
+                ribbon_styles.at[row_idx, column] = f"background-color: {color}; color: white; font-weight: 600;"
+
+    styled_ribbon = momentum_df.style.apply(lambda _: ribbon_styles, axis=None).format(
+        {column: "{:,.2f}" for column in ['Price'] + ema_columns}, na_rep=""
+    )
+    st.subheader("Momentum Ribbon — Price vs EMA")
+    st.dataframe(styled_ribbon, use_container_width=True)
+    st.caption("Green: Price is above the EMA. Red: Price is below the EMA. Data refreshes every 15 minutes.")
 
 
 # -------------------------
